@@ -1,28 +1,602 @@
 /**
  * @file chassis_control_node.cpp
- * @brief 底盘控制节点
+ * @brief 底盘运动控制节点
+ *
+ * @details
+ * 订阅图传遥控器通道数据 (/vt_remote/channels)，将摇杆量映射为底盘三轴速度，
+ * 通过 RS485 串口以 200Hz 频率发送控制帧到 STM32 MCU，
+ * 并异步接收里程计/速度反馈帧。
+ *
+ * 通道映射：
+ *   - ch0  (index 0) → vx  x 方向线速度
+ *   - ch1  (index 1) → vy  y 方向线速度
+ *   - wheel(index 4) → vw  角速度（逆时针为正）
+ *   - 通道值域 364 ~ 1684，中值 1024
+ *
+ * 串口协议（小端序）：
+ *   - 控制帧 PC→MCU: [0xAA] + vx(f32) + vy(f32) + vw(f32) + feed_rpm(f32) = 17B
+ *   - 反馈帧 MCU→PC: [0x55] + x(f32) + y(f32) + θ(f32) + vx(f32) + vy(f32)
+ *                      + vw(f32) + feed_rpm(f32) + [0xAA] = 30B
+ *
+ * 订阅话题：
+ *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
+ *
+ * 发布话题：
+ *   - /chassis/feedback    (std_msgs/Float32MultiArray): [x, y, θ, vx, vy, vw, feed_rpm]
+ *
+ * 参数：
+ *   - serial_port  (string) : 串口设备路径，默认 "/dev/chassis_usb"
+ *   - baud_rate    (int)    : 波特率，默认 921600
+ *   - max_vx       (double) : 最大 x 速度 (m/s)，默认 1.0
+ *   - max_vy       (double) : 最大 y 速度 (m/s)，默认 1.0
+ *   - max_vw       (double) : 最大角速度 (rad/s)，默认 3.0
+ *   - deadzone     (int)    : 摇杆死区（原始值），默认 20
  */
 
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstring>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
 #include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/int16_multi_array.hpp>
+
+/* ========================================================================= */
+/*  协议常量                                                                  */
+/* ========================================================================= */
+
+/** @brief 控制帧帧头 */
+static constexpr uint8_t CTRL_FRAME_HEADER = 0xAA;
+/** @brief 控制帧长度 (1B 帧头 + 4×float32) */
+static constexpr size_t CTRL_FRAME_SIZE = 17;
+
+/** @brief 反馈帧帧头 */
+static constexpr uint8_t FB_FRAME_HEADER = 0x55;
+/** @brief 反馈帧帧尾 */
+static constexpr uint8_t FB_FRAME_TAIL = 0xAA;
+/** @brief 反馈帧长度 (1B 帧头 + 7×float32 + 1B 帧尾) */
+static constexpr size_t FB_FRAME_SIZE = 30;
+/** @brief 反馈帧 float 数量 */
+static constexpr size_t FB_FLOAT_COUNT = 7;
+
+/* ========================================================================= */
+/*  摇杆通道常量                                                              */
+/* ========================================================================= */
+
+/** @brief 通道中值 */
+static constexpr int16_t CH_CENTER = 1024;
+/** @brief 通道最小值 */
+static constexpr int16_t CH_MIN = 364;
+/** @brief 通道最大值 */
+static constexpr int16_t CH_MAX = 1684;
+/** @brief 通道半程范围 */
+static constexpr double CH_HALF_RANGE = static_cast<double>(CH_MAX - CH_CENTER);  // 660
 
 /**
  * @class ChassisControlNode
- * @brief 底盘控制节点类，负责底盘运动控制
+ * @brief 底盘运动控制 ROS2 节点
+ *
+ * 负责：
+ * 1. 订阅遥控器通道数据，映射为底盘速度
+ * 2. 以 200Hz 频率通过串口发送控制帧
+ * 3. 异步接收并发布 MCU 反馈数据
  */
 class ChassisControlNode : public rclcpp::Node
 {
 public:
   /**
-   * @brief 构造函数
+   * @brief 构造函数，初始化参数、串口、订阅者、发布者、定时器
    */
-  ChassisControlNode() : Node("chassis_control_node")
+  ChassisControlNode()
+  : Node("chassis_control_node"), serial_fd_(-1)
   {
-    RCLCPP_INFO(this->get_logger(), "ChassisControlNode 已启动");
+    /* -------- 声明 & 读取参数 -------- */
+    this->declare_parameter<std::string>("serial_port", "/dev/ttyUSB0");
+    this->declare_parameter<int>("baud_rate", 921600);
+    this->declare_parameter<double>("max_vx", 1.0);
+    this->declare_parameter<double>("max_vy", 1.0);
+    this->declare_parameter<double>("max_vw", 3.0);
+    this->declare_parameter<int>("deadzone", 20);
+
+    serial_port_ = this->get_parameter("serial_port").as_string();
+    baud_rate_   = this->get_parameter("baud_rate").as_int();
+    max_vx_      = this->get_parameter("max_vx").as_double();
+    max_vy_      = this->get_parameter("max_vy").as_double();
+    max_vw_      = this->get_parameter("max_vw").as_double();
+    deadzone_    = this->get_parameter("deadzone").as_int();
+
+    /* -------- 订阅遥控器通道 -------- */
+    sub_channels_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/channels", 10,
+      std::bind(&ChassisControlNode::channelsCallback, this, std::placeholders::_1));
+
+    /* -------- 反馈发布者 -------- */
+    pub_feedback_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+      "/chassis/feedback", 10);
+
+    /* -------- 打开串口 -------- */
+    if (!openSerial()) {
+      RCLCPP_ERROR(this->get_logger(), "无法打开串口 %s，节点将尝试重连...",
+                   serial_port_.c_str());
+    }
+
+    /* -------- 预分配 -------- */
+    ctrl_frame_[0] = CTRL_FRAME_HEADER;
+    feedback_msg_.data.resize(FB_FLOAT_COUNT, 0.0f);
+    rx_buffer_.reserve(256);
+
+    /* -------- 时间戳初始化 -------- */
+    last_channel_time_  = this->now();
+    last_feedback_time_ = this->now();
+
+    /* -------- 200Hz 控制定时器 (5ms) -------- */
+    control_timer_ = this->create_wall_timer(
+      std::chrono::microseconds(5000),
+      std::bind(&ChassisControlNode::controlTimerCallback, this));
+
+    RCLCPP_INFO(this->get_logger(),
+                "ChassisControlNode 已启动 | 串口: %s | 波特率: %d | 控制频率: 200Hz",
+                serial_port_.c_str(), baud_rate_);
+    RCLCPP_INFO(this->get_logger(),
+                "最大速度: vx=%.2f vy=%.2f m/s, vw=%.2f rad/s | 死区: %d",
+                max_vx_, max_vy_, max_vw_, deadzone_);
+  }
+
+  /**
+   * @brief 析构函数：发送停止指令后关闭串口
+   */
+  ~ChassisControlNode() override
+  {
+    sendStopCommand();
+    closeSerial();
   }
 
 private:
+  // =========================================================================
+  //  回调函数
+  // =========================================================================
+
+  /**
+   * @brief 遥控器通道数据回调（轻量，仅更新缓存速度值）
+   * @param msg 通道数据 [ch0, ch1, ch2, ch3, wheel]
+   */
+  void channelsCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  {
+    if (msg->data.size() < 5) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "通道数据不完整: 期望 5 个值，收到 %zu", msg->data.size());
+      return;
+    }
+
+    /* ch0 → vx, ch1 → vy, wheel(index 4) → vw */
+    const float vx = mapChannelToVelocity(msg->data[0], max_vx_);
+    const float vy = mapChannelToVelocity(msg->data[1], max_vy_);
+    const float vw = mapChannelToVelocity(msg->data[4], max_vw_);
+
+    {
+      std::lock_guard<std::mutex> lock(vel_mutex_);
+      target_vx_ = vx;
+      target_vy_ = vy;
+      target_vw_ = vw;
+      /* feed_rpm_ 由其他接口控制，此处不修改 */
+    }
+
+    channel_received_ = true;
+    last_channel_time_ = this->now();
+  }
+
+  /**
+   * @brief 200Hz 控制定时器回调：发送控制帧 + 读取反馈
+   */
+  void controlTimerCallback()
+  {
+    /* 串口未打开时尝试重连 */
+    if (serial_fd_ < 0) {
+      reconnect_counter_++;
+      if (reconnect_counter_ >= 200) {          /* 约每 1 秒尝试 */
+        reconnect_counter_ = 0;
+        RCLCPP_WARN(this->get_logger(), "尝试重新打开串口 %s ...",
+                    serial_port_.c_str());
+        openSerial();
+      }
+      return;
+    }
+
+    /* 获取目标速度（加锁） */
+    float vx, vy, vw, feed;
+    {
+      std::lock_guard<std::mutex> lock(vel_mutex_);
+
+      /* 安全保护：500ms 未收到遥控数据 → 零速 */
+      if (!channel_received_ ||
+          (this->now() - last_channel_time_).seconds() > 0.5) {
+        vx = vy = vw = feed = 0.0f;
+      } else {
+        vx   = target_vx_;
+        vy   = target_vy_;
+        vw   = target_vw_;
+        feed = feed_rpm_;
+      }
+    }
+
+    /* 发送控制帧 */
+    sendControlFrame(vx, vy, vw, feed);
+
+    /* 非阻塞读取反馈 */
+    readFeedback();
+
+    /* 反馈超时检测 */
+    checkFeedbackTimeout();
+  }
+
+  // =========================================================================
+  //  通道映射
+  // =========================================================================
+
+  /**
+   * @brief 将原始通道值映射为速度，带死区处理
+   * @param raw      原始通道值 (364 ~ 1684, 中值 1024)
+   * @param max_vel  该轴最大速度
+   * @return 映射后的速度值
+   */
+  float mapChannelToVelocity(int16_t raw, double max_vel) const
+  {
+    const int16_t offset = static_cast<int16_t>(raw - CH_CENTER);
+
+    /* 死区内返回零 */
+    if (std::abs(static_cast<int>(offset)) <= deadzone_) {
+      return 0.0f;
+    }
+
+    /* 扣除死区后的有效范围 */
+    const double effective_range = CH_HALF_RANGE - static_cast<double>(deadzone_);
+    double normalized;
+    if (offset > 0) {
+      normalized = static_cast<double>(offset - deadzone_) / effective_range;
+    } else {
+      normalized = static_cast<double>(offset + deadzone_) / effective_range;
+    }
+
+    /* 限幅 [-1, 1] */
+    normalized = std::clamp(normalized, -1.0, 1.0);
+
+    return static_cast<float>(normalized * max_vel);
+  }
+
+  // =========================================================================
+  //  串口协议
+  // =========================================================================
+
+  /**
+   * @brief 发送控制帧到 MCU
+   * @param vx       x 方向速度 (m/s)
+   * @param vy       y 方向速度 (m/s)
+   * @param vw       角速度 (rad/s)
+   * @param feed_rpm 供弹电机转速 (RPM)
+   */
+  void sendControlFrame(float vx, float vy, float vw, float feed_rpm)
+  {
+    /* 帧头已在构造函数中预填充 */
+    std::memcpy(&ctrl_frame_[1],  &vx,       sizeof(float));
+    std::memcpy(&ctrl_frame_[5],  &vy,       sizeof(float));
+    std::memcpy(&ctrl_frame_[9],  &vw,       sizeof(float));
+    std::memcpy(&ctrl_frame_[13], &feed_rpm, sizeof(float));
+
+    const ssize_t written = ::write(serial_fd_, ctrl_frame_, CTRL_FRAME_SIZE);
+    if (written < 0) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        RCLCPP_ERROR(this->get_logger(), "串口写入错误: %s", strerror(errno));
+        closeSerial();
+      }
+    }
+  }
+
+  /**
+   * @brief 非阻塞读取并解析反馈帧，解析成功后发布到话题
+   */
+  void readFeedback()
+  {
+    /* 一次性读取所有可用数据 */
+    uint8_t tmp[256];
+    const ssize_t n = ::read(serial_fd_, tmp, sizeof(tmp));
+    if (n <= 0) {
+      return;
+    }
+
+    /* 追加到接收缓冲区 */
+    rx_buffer_.insert(rx_buffer_.end(), tmp, tmp + n);
+
+    /* 解析所有完整的反馈帧 */
+    while (rx_buffer_.size() >= FB_FRAME_SIZE) {
+      /* 查找帧头 0x55 并验证帧尾 */
+      const size_t header_pos = findFeedbackHeader();
+      if (header_pos == std::string::npos) {
+        /* 未找到有效帧头，保留最后可能的部分数据 */
+        if (rx_buffer_.size() > FB_FRAME_SIZE - 1) {
+          rx_buffer_.erase(
+            rx_buffer_.begin(),
+            rx_buffer_.end() - static_cast<long>(FB_FRAME_SIZE - 1));
+        }
+        break;
+      }
+
+      /* 丢弃帧头之前的无效数据 */
+      if (header_pos > 0) {
+        rx_buffer_.erase(rx_buffer_.begin(),
+                         rx_buffer_.begin() + static_cast<long>(header_pos));
+      }
+
+      /* 数据不足一帧则等待下次 */
+      if (rx_buffer_.size() < FB_FRAME_SIZE) {
+        break;
+      }
+
+      /* 校验帧尾 */
+      if (rx_buffer_[FB_FRAME_SIZE - 1] == FB_FRAME_TAIL) {
+        /* 解析 7 个 float32: x, y, theta, vx, vy, vw, feed_rpm */
+        float values[FB_FLOAT_COUNT];
+        std::memcpy(values, &rx_buffer_[1], FB_FLOAT_COUNT * sizeof(float));
+
+        for (size_t i = 0; i < FB_FLOAT_COUNT; ++i) {
+          feedback_msg_.data[i] = values[i];
+        }
+        pub_feedback_->publish(feedback_msg_);
+
+        last_feedback_time_ = this->now();
+        if (feedback_timeout_) {
+          RCLCPP_INFO(this->get_logger(), "反馈帧恢复接收");
+          feedback_timeout_ = false;
+        }
+
+        RCLCPP_DEBUG(this->get_logger(),
+                     "反馈: Pos(%.3f, %.3f, %.3f) Vel(%.3f, %.3f, %.3f) Feed(%.0f)",
+                     values[0], values[1], values[2],
+                     values[3], values[4], values[5], values[6]);
+      }
+
+      /* 移除已处理/无效的帧 */
+      rx_buffer_.erase(rx_buffer_.begin(),
+                       rx_buffer_.begin() + static_cast<long>(FB_FRAME_SIZE));
+    }
+
+    /* 防止缓冲区无限增长 */
+    if (rx_buffer_.size() > 512) {
+      rx_buffer_.erase(
+        rx_buffer_.begin(),
+        rx_buffer_.end() - static_cast<long>(FB_FRAME_SIZE));
+    }
+  }
+
+  /**
+   * @brief 在接收缓冲区中查找有效反馈帧头
+   *
+   * @details 同时验证帧头 0x55 和帧尾 0xAA 的位置关系，
+   *          减少误帧头的影响。
+   * @return 帧头起始位置，未找到返回 std::string::npos
+   */
+  size_t findFeedbackHeader() const
+  {
+    for (size_t i = 0; i + FB_FRAME_SIZE <= rx_buffer_.size(); ++i) {
+      if (rx_buffer_[i] == FB_FRAME_HEADER &&
+          rx_buffer_[i + FB_FRAME_SIZE - 1] == FB_FRAME_TAIL) {
+        return i;
+      }
+    }
+    return std::string::npos;
+  }
+
+  /**
+   * @brief 反馈帧超时检测
+   */
+  void checkFeedbackTimeout()
+  {
+    if (!feedback_timeout_ &&
+        (this->now() - last_feedback_time_).seconds() > 3.0) {
+      RCLCPP_WARN(this->get_logger(), "MCU 反馈超时：3 秒内未收到有效反馈帧");
+      feedback_timeout_ = true;
+    }
+  }
+
+  /**
+   * @brief 发送停止指令（连续 3 帧零速，确保 MCU 接收到）
+   */
+  void sendStopCommand()
+  {
+    if (serial_fd_ < 0) {
+      return;
+    }
+    for (int i = 0; i < 3; ++i) {
+      sendControlFrame(0.0f, 0.0f, 0.0f, 0.0f);
+      usleep(5000);  /* 5ms 间隔 */
+    }
+    RCLCPP_INFO(this->get_logger(), "已发送停止指令");
+  }
+
+  // =========================================================================
+  //  串口操作
+  // =========================================================================
+
+  /**
+   * @brief 打开并配置串口 (8N1, 无流控, 非阻塞)
+   * @return true 成功, false 失败
+   */
+  bool openSerial()
+  {
+    serial_fd_ = ::open(serial_port_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (serial_fd_ < 0) {
+      RCLCPP_ERROR(this->get_logger(), "打开串口失败: %s (%s)",
+                   serial_port_.c_str(), strerror(errno));
+      return false;
+    }
+
+    struct termios tty{};
+
+    if (tcgetattr(serial_fd_, &tty) != 0) {
+      RCLCPP_ERROR(this->get_logger(), "tcgetattr 失败: %s", strerror(errno));
+      closeSerial();
+      return false;
+    }
+
+    /* 波特率 */
+    const speed_t baud = baudToSpeed(baud_rate_);
+    cfsetispeed(&tty, baud);
+    cfsetospeed(&tty, baud);
+
+    /* 8N1: 8 数据位, 无校验, 1 停止位 */
+    tty.c_cflag &= ~PARENB;
+    tty.c_cflag &= ~CSTOPB;
+    tty.c_cflag &= ~CSIZE;
+    tty.c_cflag |= CS8;
+
+    /* 无硬件流控 */
+    tty.c_cflag &= ~CRTSCTS;
+
+    /* 启用接收, 本地模式 */
+    tty.c_cflag |= (CLOCAL | CREAD);
+
+    /* 原始输入模式 */
+    tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+
+    /* 禁用软件流控 & 特殊字符处理 */
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY);
+    tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP |
+                      INLCR | IGNCR | ICRNL);
+
+    /* 原始输出模式 */
+    tty.c_oflag &= ~OPOST;
+
+    /* 完全非阻塞读取 */
+    tty.c_cc[VMIN]  = 0;
+    tty.c_cc[VTIME] = 0;
+
+    /* 清空缓冲区并应用配置 */
+    tcflush(serial_fd_, TCIOFLUSH);
+    if (tcsetattr(serial_fd_, TCSANOW, &tty) != 0) {
+      RCLCPP_ERROR(this->get_logger(), "tcsetattr 失败: %s", strerror(errno));
+      closeSerial();
+      return false;
+    }
+
+    RCLCPP_INFO(this->get_logger(), "串口 %s 已打开 (波特率 %d)", serial_port_.c_str(), baud_rate_);
+    return true;
+  }
+
+  /**
+   * @brief 关闭串口
+   */
+  void closeSerial()
+  {
+    if (serial_fd_ >= 0) {
+      ::close(serial_fd_);
+      serial_fd_ = -1;
+    }
+  }
+
+  /**
+   * @brief 将整数波特率转换为 termios speed_t 常量
+   * @param baud 整数波特率
+   * @return 对应的 speed_t 值
+   */
+  static speed_t baudToSpeed(int baud)
+  {
+    switch (baud) {
+      case 9600:    return B9600;
+      case 19200:   return B19200;
+      case 38400:   return B38400;
+      case 57600:   return B57600;
+      case 115200:  return B115200;
+      case 230400:  return B230400;
+      case 460800:  return B460800;
+      case 500000:  return B500000;
+      case 576000:  return B576000;
+      case 921600:  return B921600;
+      case 1000000: return B1000000;
+      default:      return B921600;
+    }
+  }
+
+  // =========================================================================
+  //  成员变量
+  // =========================================================================
+
+  /* ---- 参数 ---- */
+
+  /** @brief 串口设备路径 */
+  std::string serial_port_;
+  /** @brief 波特率 */
+  int baud_rate_{};
+  /** @brief 最大 x 方向速度 (m/s) */
+  double max_vx_{};
+  /** @brief 最大 y 方向速度 (m/s) */
+  double max_vy_{};
+  /** @brief 最大角速度 (rad/s) */
+  double max_vw_{};
+  /** @brief 摇杆死区（原始值单位） */
+  int deadzone_{};
+
+  /* ---- 串口 ---- */
+
+  /** @brief 串口文件描述符 */
+  int serial_fd_;
+  /** @brief 接收缓冲区 */
+  std::vector<uint8_t> rx_buffer_;
+  /** @brief 重连计数器 */
+  int reconnect_counter_ = 0;
+
+  /* ---- 速度状态（受 vel_mutex_ 保护）---- */
+
+  /** @brief 速度状态互斥锁 */
+  std::mutex vel_mutex_;
+  /** @brief 目标 x 速度 */
+  float target_vx_ = 0.0f;
+  /** @brief 目标 y 速度 */
+  float target_vy_ = 0.0f;
+  /** @brief 目标角速度 */
+  float target_vw_ = 0.0f;
+  /** @brief 供弹电机目标转速 */
+  float feed_rpm_ = 0.0f;
+  /** @brief 是否已收到过遥控数据 */
+  bool channel_received_ = false;
+
+  /* ---- 时间戳 ---- */
+
+  /** @brief 上次收到通道数据的时间 */
+  rclcpp::Time last_channel_time_;
+  /** @brief 上次收到反馈帧的时间 */
+  rclcpp::Time last_feedback_time_;
+  /** @brief 反馈是否超时 */
+  bool feedback_timeout_ = false;
+
+  /* ---- 预分配缓冲区 ---- */
+
+  /** @brief 预分配的控制帧缓冲区 */
+  uint8_t ctrl_frame_[CTRL_FRAME_SIZE]{};
+  /** @brief 预分配的反馈消息 */
+  std_msgs::msg::Float32MultiArray feedback_msg_;
+
+  /* ---- ROS 对象 ---- */
+
+  /** @brief 200Hz 控制定时器 */
+  rclcpp::TimerBase::SharedPtr control_timer_;
+  /** @brief 遥控器通道订阅者 */
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_channels_;
+  /** @brief 反馈数据发布者 */
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_feedback_;
 };
+
+/* ========================================================================= */
+/*  Main                                                                     */
+/* ========================================================================= */
 
 int main(int argc, char *argv[])
 {

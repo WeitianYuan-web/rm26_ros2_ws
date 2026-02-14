@@ -14,7 +14,7 @@ CAN2 电机控制测试脚本
   python ammo_booster_control_can_motor_test.py                          # 默认 slcan, COM3, 1Mbps
   python ammo_booster_control_can_motor_test.py -i slcan -c COM5         # 指定串口
   python ammo_booster_control_can_motor_test.py -i pcan -c PCAN_USBBUS1  # PCAN 适配器
-  python ammo_booster_control_can_motor_test.py -i socketcan -c can0     # Linux SocketCAN
+  python ammo_booster_control_can_motor_test.py -i socketcan -c can2     # Linux SocketCAN
 """
 
 import argparse

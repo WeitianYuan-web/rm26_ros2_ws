@@ -82,6 +82,10 @@ public:
       std::chrono::milliseconds(5),
       std::bind(&VtRemoteNode::timerCallback, this));
 
+    /* 初始化超时检测 */
+    last_frame_time_ = this->now();
+    is_timeout_ = false;
+
     RCLCPP_INFO(this->get_logger(),
                 "VtRemoteNode 已启动 | 串口: %s | 波特率: %d",
                 serial_port_.c_str(), baud_rate_);
@@ -208,6 +212,13 @@ private:
    */
   void timerCallback()
   {
+    /* 超时检测：5 秒内未收到有效帧则报警（放在最前面，确保始终执行） */
+    if (!is_timeout_ && serial_fd_ >= 0 &&
+        (this->now() - last_frame_time_).seconds() > 5.0) {
+      RCLCPP_WARN(this->get_logger(), "连接超时：5 秒内未收到有效数据帧");
+      is_timeout_ = true;
+    }
+
     /* 如果串口未打开，尝试重连 */
     if (serial_fd_ < 0) {
       reconnect_counter_++;
@@ -281,6 +292,11 @@ private:
       if (parseFrame(rx_buffer_.data(), data)) {
         publishData(data);
         frame_error_count_ = 0;
+        last_frame_time_ = this->now();
+        if (is_timeout_) {
+          RCLCPP_INFO(this->get_logger(), "数据帧恢复接收");
+          is_timeout_ = false;
+        }
       } else {
         frame_error_count_++;
         if (frame_error_count_ % 100 == 1) {
@@ -400,6 +416,12 @@ private:
 
   /** @brief 帧错误计数 */
   size_t frame_error_count_ = 0;
+
+  /** @brief 上次成功接收数据帧的时间 */
+  rclcpp::Time last_frame_time_;
+
+  /** @brief 是否处于超时状态 */
+  bool is_timeout_ = false;
 
   /** @brief 定时器 */
   rclcpp::TimerBase::SharedPtr timer_;

@@ -24,7 +24,7 @@ namespace vt_remote_control
 constexpr uint8_t FRAME_LENGTH = 21;
 
 /** @brief 帧头第一个字节 */
-constexpr uint8_t FRAME_HEADER_1 = 0xAF;
+constexpr uint8_t FRAME_HEADER_1 = 0xA9;
 
 /** @brief 帧头第二个字节 */
 constexpr uint8_t FRAME_HEADER_2 = 0x53;

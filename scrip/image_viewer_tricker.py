@@ -235,7 +235,16 @@ class MJPEGStreamHandler(BaseHTTPRequestHandler):
         @brief 返回最新一帧 JPEG 快照 (供 JS 逐帧拉取)
         """
         streamer = self.server.streamer
-        jpeg_bytes, _ = streamer.get_jpeg_frame()
+        streamer._snapshot_last_request = time.time()
+
+        # 等待帧可用 (最多等 500ms)
+        for _ in range(50):
+            jpeg_bytes, _ = streamer.get_jpeg_frame()
+            if jpeg_bytes is not None:
+                break
+            time.sleep(0.01)
+        else:
+            jpeg_bytes, _ = streamer.get_jpeg_frame()
 
         if jpeg_bytes is None:
             self.send_error(503, "No frame available")
@@ -344,6 +353,9 @@ class MJPEGStreamer:
         self._jpeg_buf = None
         self._frame_seq = 0
 
+        # 快照客户端活跃追踪 (JS fetch 是短连接，不走 client_count_)
+        self._snapshot_last_request = 0.0
+
         # 原始帧队列 (主线程 -> 编码线程)
         self._raw_lock = threading.Lock()
         self._raw_frame = None
@@ -381,9 +393,26 @@ class MJPEGStreamer:
         )
 
     def stop(self):
+        """
+        @brief 停止编码线程和 HTTP 服务器
+        """
         self._running = False
         self._raw_new.set()
-        self._server.shutdown()
+        # 在后台线程中 shutdown，避免卡死主线程
+        threading.Thread(
+            target=self._server.shutdown, daemon=True).start()
+
+    def has_active_clients(self):
+        """
+        @brief 检查是否有活跃客户端 (MJPEG 长连接 或 近期 snapshot 请求)
+        @return True 如果有客户端需要帧数据
+        """
+        if self.client_count_ > 0:
+            return True
+        # JS snapshot 客户端: 2 秒内有请求则认为活跃
+        if time.time() - self._snapshot_last_request < 2.0:
+            return True
+        return False
 
     def update_frame(self, frame, fps):
         """
@@ -392,7 +421,7 @@ class MJPEGStreamer:
         @param fps 当前帧率
         """
         self.fps_ = fps
-        if self.client_count_ <= 0:
+        if not self.has_active_clients():
             return
         with self._raw_lock:
             self._raw_frame = frame

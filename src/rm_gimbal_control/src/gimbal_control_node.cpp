@@ -60,14 +60,21 @@ public:
     this->declare_parameter<int>("deadzone", 5); // 遥控器数值死区
 
     // 追踪模式参数
-    this->declare_parameter<double>("track_yaw_kp", 1.0);       // 追踪Yaw方向比例增益
-    this->declare_parameter<double>("track_yaw_ki", 0.1);       // 追踪Yaw方向积分增益
-    this->declare_parameter<double>("track_pitch_kp", -0.4);     // 追踪Pitch方向比例增益
-    this->declare_parameter<double>("track_pitch_ki", -0.02);     // 追踪Pitch方向积分增益
+    this->declare_parameter<double>("track_yaw_kp", 1.5);       // 追踪Yaw方向比例增益
+    this->declare_parameter<double>("track_yaw_ki", 0.4);       // 追踪Yaw方向积分增益
+    this->declare_parameter<double>("track_pitch_kp", -0.6);     // 追踪Pitch方向比例增益
+    this->declare_parameter<double>("track_pitch_ki", -0.2);     // 追踪Pitch方向积分增益
     this->declare_parameter<double>("track_exit_timeout", 0.5); // 松开trigger后退出追踪的超时时间 s
 
+    // Yaw瞄准偏移校准
+    this->declare_parameter<double>("track_yaw_offset", -0.2);      // Yaw瞄准偏移 rad（偏右设负值，偏左设正值）
+
+    // Yaw速度预测前馈参数
+    this->declare_parameter<double>("track_yaw_ff_gain",  2.0);    // 前馈增益（>1加大预测量，<1减小）
+    this->declare_parameter<double>("track_yaw_ff_filter", 0.2);   
+    this->declare_parameter<double>("track_yaw_ff_deadzone", 0.1); // 前馈角速度死区 rad/s（忽略小于此值的角速度）
     // 弹道下坠补偿参数
-    this->declare_parameter<double>("bullet_velocity", 11.0);  // 弹丸初速度 m/s
+    this->declare_parameter<double>("bullet_velocity", 20.0);  // 弹丸初速度 m/s
     this->declare_parameter<double>("gravity", 9.81);           // 重力加速度 m/s²
 
     // 获取参数
@@ -102,6 +109,12 @@ public:
     track_pitch_ki_ = this->get_parameter("track_pitch_ki").as_double();
     track_exit_timeout_ = this->get_parameter("track_exit_timeout").as_double();
 
+    track_yaw_offset_ = this->get_parameter("track_yaw_offset").as_double();
+
+    track_yaw_ff_gain_ = this->get_parameter("track_yaw_ff_gain").as_double();
+    track_yaw_ff_filter_ = this->get_parameter("track_yaw_ff_filter").as_double();
+    track_yaw_ff_deadzone_ = this->get_parameter("track_yaw_ff_deadzone").as_double();
+
     bullet_velocity_ = this->get_parameter("bullet_velocity").as_double();
     gravity_ = this->get_parameter("gravity").as_double();
 
@@ -128,6 +141,8 @@ public:
     RCLCPP_INFO(this->get_logger(), "  RC范围: %d~%d (中值%d)", rc_min_value_, rc_max_value_, rc_mid_value_);
     RCLCPP_INFO(this->get_logger(), "  追踪参数: Yaw(Kp=%.2f, Ki=%.2f), Pitch(Kp=%.2f, Ki=%.2f), 退出超时=%.1fs",
                 track_yaw_kp_, track_yaw_ki_, track_pitch_kp_, track_pitch_ki_, track_exit_timeout_);
+    RCLCPP_INFO(this->get_logger(), "  Yaw偏移=%.4f rad (%.2f°), 前馈: 增益=%.2f, 滤波=%.2f, 死区=%.2f rad/s",
+                track_yaw_offset_, track_yaw_offset_ * 180.0 / M_PI, track_yaw_ff_gain_, track_yaw_ff_filter_, track_yaw_ff_deadzone_);
     RCLCPP_INFO(this->get_logger(), "  弹道补偿: 弹速=%.1f m/s, 重力=%.2f m/s²", bullet_velocity_, gravity_);
 
     // 创建发布者（用于监控当前目标位置）
@@ -352,6 +367,10 @@ private:
         // 重置增量PI控制器状态
         track_yaw_error_prev_ = 0.0;
         track_pitch_error_prev_ = 0.0;
+        // 重置速度预测前馈状态
+        yaw_angular_velocity_filtered_ = 0.0;
+        yaw_ff_prev_ = 0.0;
+        track_armors_time_valid_ = false;
         // 初始化追踪模式下电机2的目标位置为当前实际位置
         if (motor2_initialized_ && motor2_) {
           motor2_track_target_position_ = motor2_->position_;
@@ -431,13 +450,40 @@ private:
      * @brief Pitch误差融合弹道补偿
      *
      * 将弹道下坠补偿融入pitch误差信号，而不是作为累加偏移。
-     * 原始 pitch_error = atan2(y,z)：目标在画面中心时为0。
      * 补偿后 pitch_error = atan2(y,z) - drop_compensation：
-     *   当目标在画面中心偏下 drop_compensation 时误差为0，
-     *   即 PI 控制器会驱动枪口抬高，使目标出现在画面偏下位置，
-     *   弹丸下落后刚好命中目标。
+     *   PI 控制器驱动枪口抬高，使弹丸下落后刚好命中目标。
      */
     double pitch_error = std::atan2(y, z) - drop_compensation;
+
+    /**
+     * @brief Yaw方向速度预测前馈
+     *
+     * 通过计算目标的Yaw角速度，结合弹丸飞行时间，预测目标在弹丸到达时的位置偏移。
+     * 使用增量式前馈：每次只应用前馈变化量，避免累积误差。
+     * 角速度使用一阶低通滤波器平滑，抑制检测噪声。
+     *
+     * 前馈量 = 滤波角速度 × 弹丸飞行时间 × 前馈增益
+     */
+    auto armors_now = std::chrono::steady_clock::now();
+    double yaw_angular_velocity = 0.0;
+    if (track_armors_time_valid_) {
+      double armors_dt = std::chrono::duration<double>(
+          armors_now - track_armors_last_time_).count();
+      if (armors_dt > 0.001 && armors_dt < 0.5) { // 合理的时间间隔
+        yaw_angular_velocity = (yaw_error - track_yaw_error_prev_) / armors_dt;
+      }
+    }
+    track_armors_last_time_ = armors_now;
+    track_armors_time_valid_ = true;
+
+    // 死区：忽略微小角速度（抑制静止时检测噪声导致的前馈漂移）
+    if (std::abs(yaw_angular_velocity) < track_yaw_ff_deadzone_) {
+      yaw_angular_velocity = 0.0;
+    }
+
+    // 低通滤波平滑角速度
+    yaw_angular_velocity_filtered_ = track_yaw_ff_filter_ * yaw_angular_velocity
+                                   + (1.0 - track_yaw_ff_filter_) * yaw_angular_velocity_filtered_;
 
     // 增量式PI: Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)
     double yaw_delta = track_yaw_kp_ * (yaw_error - track_yaw_error_prev_)
@@ -448,8 +494,13 @@ private:
                        + track_pitch_ki_ * pitch_error;
     track_pitch_error_prev_ = pitch_error;
 
-    // 更新电机1 (Yaw) 目标位置
-    motor1_target_position_ += yaw_delta;
+    // 速度预测前馈：增量式更新，只应用前馈变化量
+    double yaw_ff_new = yaw_angular_velocity_filtered_ * t_flight * track_yaw_ff_gain_;
+    double yaw_ff_delta = yaw_ff_new - yaw_ff_prev_;
+    yaw_ff_prev_ = yaw_ff_new;
+
+    // 更新电机1 (Yaw) 目标位置 = PI增量 + 前馈增量
+    motor1_target_position_ += yaw_delta + yaw_ff_delta;
 
     // 更新电机2 (Pitch) 目标位置
     motor2_track_target_position_ += pitch_delta;
@@ -462,16 +513,15 @@ private:
     static int track_log_counter = 0;
     if (++track_log_counter >= 30) { // 约每秒打印一次（假设30Hz检测频率）
       RCLCPP_INFO(this->get_logger(),
-                  "[追踪] 目标: (%.3f, %.3f, %.3f)m, 距离=%.2fm, "
-                  "误差: yaw=%.2f° pitch=%.2f°(含补偿), "
-                  "弹道补偿=%.2f° (下坠%.1fmm), "
-                  "motor2目标=%.4f rad",
-                  x, y, z, distance,
+                  "[追踪] 距离=%.2fm, 误差: yaw=%.2f° pitch=%.2f°, "
+                  "弹道补偿=%.2f°, "
+                  "Yaw角速度=%.1f°/s 前馈=%.2f°",
+                  distance,
                   yaw_error * 180.0 / M_PI,
                   pitch_error * 180.0 / M_PI,
                   drop_compensation * 180.0 / M_PI,
-                  bullet_drop * 1000.0,
-                  motor2_track_target_position_);
+                  yaw_angular_velocity_filtered_ * 180.0 / M_PI,
+                  yaw_ff_new * 180.0 / M_PI);
       track_log_counter = 0;
     }
   }
@@ -537,10 +587,14 @@ private:
     }
     // 追踪模式下，motor1_target_position_ 由 armors_callback 更新
 
-    // 下发电机1 CSP 位置指令
+    // 下发电机1 CSP 位置指令（追踪模式下叠加瞄准偏移校准）
+    double motor1_cmd_position = motor1_target_position_;
+    if (tracking_mode_) {
+      motor1_cmd_position += track_yaw_offset_;
+    }
     motor1_->RobStrite_Motor_PosCSP_control(
         motor1_control_speed_,
-        motor1_target_position_);
+        motor1_cmd_position);
 
     // 追踪模式下同时以高频率下发电机2指令
     if (tracking_mode_ && motor2_initialized_ && motor2_) {
@@ -708,6 +762,18 @@ private:
   double track_yaw_error_prev_{0.0};                                ///< Yaw方向上一次误差
   double track_pitch_error_prev_{0.0};                              ///< Pitch方向上一次误差
   double motor2_track_target_position_{0.0};                        ///< 追踪模式下电机2目标位置
+
+  // Yaw瞄准偏移校准
+  double track_yaw_offset_;                                         ///< Yaw瞄准偏移 rad
+
+  // Yaw速度预测前馈
+  double track_yaw_ff_gain_;                                        ///< 前馈增益
+  double track_yaw_ff_filter_;                                      ///< 角速度低通滤波系数
+  double track_yaw_ff_deadzone_;                                    ///< 前馈角速度死区 rad/s
+  double yaw_angular_velocity_filtered_{0.0};                       ///< 滤波后的Yaw角速度 rad/s
+  double yaw_ff_prev_{0.0};                                         ///< 上一次前馈值（增量式更新）
+  std::chrono::steady_clock::time_point track_armors_last_time_;    ///< 上次armors回调时间
+  bool track_armors_time_valid_{false};                             ///< armors时间戳是否有效
 
   // 弹道下坠补偿参数
   double bullet_velocity_;                                          ///< 弹丸初速度 m/s

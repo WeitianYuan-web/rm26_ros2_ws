@@ -3,8 +3,8 @@
  * @brief 海康威视 GigE 工业相机图像采集 ROS2 节点 (Jetson GPU 加速版)
  * @details 基于 MVS SDK 实现相机初始化、连续取流、图像格式转换，
  *          并通过 ROS2 话题发布 sensor_msgs::msg::Image 消息。
- *          相机参数：分辨率 640x480，帧率 60fps，Free-Run 连续采集模式。
- *          编译时定义 USE_CUDA 可启用 Jetson GPU 加速颜色空间转换。
+ *          相机参数：传感器全画幅采集后软件缩放至 640x480，帧率 60fps，Free-Run 连续采集模式。
+ *          编译时定义 USE_CUDA 可启用 Jetson GPU 加速颜色空间转换及图像缩放。
  */
 
 #include <rclcpp/rclcpp.hpp>
@@ -16,6 +16,7 @@
 #ifdef USE_CUDA
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudawarping.hpp>
 #endif
 
 #include <thread>
@@ -192,7 +193,7 @@ private:
      * @brief 初始化相机
      * @details 按顺序执行：枚举设备 -> 创建句柄 -> 打开设备 ->
      *          设置最优包大小 -> 关闭触发模式(Free-Run) ->
-     *          设置分辨率(640x480) -> 设置帧率(60fps) ->
+     *          设置全画幅分辨率 -> 设置帧率(60fps) ->
      *          开始取流 -> 获取 PayloadSize
      * @return true 初始化成功
      * @return false 初始化失败
@@ -288,7 +289,7 @@ private:
             RCLCPP_WARN(this->get_logger(), "设置像素格式失败，将使用相机默认格式");
         }
 
-        /* 6. 设置分辨率为 640x480 (降低分辨率以减少 CPU/带宽负载) */
+        /* 6. 设置全画幅采集 (使用传感器最大分辨率，软件端缩放至 640x480) */
         if (!setResolution())
         {
             RCLCPP_WARN(this->get_logger(), "设置分辨率失败，将使用相机默认分辨率");
@@ -378,9 +379,10 @@ private:
     }
 
     /**
-     * @brief 设置相机分辨率为 TARGET_WIDTH x TARGET_HEIGHT
-     * @details 先设置 OffsetX/OffsetY 为 0，再设置宽高，最后居中 ROI。
-     *          Offset 需要按步进对齐（通常为 2）。
+     * @brief 设置相机分辨率为传感器最大值（全画幅采集）
+     * @details 使用传感器的最大分辨率采集完整画面，后续在软件端
+     *          通过 cv::resize 缩放到 TARGET_WIDTH x TARGET_HEIGHT。
+     *          相比 ROI 裁切，全画幅采集保留完整视野。
      * @return true 设置成功
      * @return false 设置失败
      */
@@ -388,59 +390,44 @@ private:
     {
         int nRet = MV_OK;
 
-        /* 先将 Offset 归零，避免宽高设置时超出范围 */
+        /* 先将 Offset 归零，确保使用完整传感器区域 */
         MV_CC_SetIntValue(handle_, "OffsetX", 0);
         MV_CC_SetIntValue(handle_, "OffsetY", 0);
 
-        /* 设置宽度 */
-        nRet = MV_CC_SetIntValue(handle_, "Width", TARGET_WIDTH);
-        if (MV_OK != nRet)
-        {
-            RCLCPP_WARN(this->get_logger(), "设置宽度 %u 失败! nRet [0x%x]", TARGET_WIDTH, nRet);
-            return false;
-        }
-
-        /* 设置高度 */
-        nRet = MV_CC_SetIntValue(handle_, "Height", TARGET_HEIGHT);
-        if (MV_OK != nRet)
-        {
-            RCLCPP_WARN(this->get_logger(), "设置高度 %u 失败! nRet [0x%x]", TARGET_HEIGHT, nRet);
-            return false;
-        }
-
-        /* 获取传感器最大分辨率，计算居中偏移 */
+        /* 获取传感器最大分辨率 */
         MVCC_INTVALUE stWidthMax, stHeightMax;
         memset(&stWidthMax, 0, sizeof(MVCC_INTVALUE));
         memset(&stHeightMax, 0, sizeof(MVCC_INTVALUE));
 
-        if (MV_OK == MV_CC_GetIntValue(handle_, "WidthMax", &stWidthMax) &&
-            MV_OK == MV_CC_GetIntValue(handle_, "HeightMax", &stHeightMax))
+        if (MV_OK != MV_CC_GetIntValue(handle_, "WidthMax", &stWidthMax) ||
+            MV_OK != MV_CC_GetIntValue(handle_, "HeightMax", &stHeightMax))
         {
-            /* Offset 通常需要 2 字节对齐 */
-            int offsetX = static_cast<int>((stWidthMax.nCurValue - TARGET_WIDTH) / 2);
-            int offsetY = static_cast<int>((stHeightMax.nCurValue - TARGET_HEIGHT) / 2);
-            offsetX = (offsetX / 2) * 2;
-            offsetY = (offsetY / 2) * 2;
-
-            if (offsetX > 0)
-            {
-                MV_CC_SetIntValue(handle_, "OffsetX", offsetX);
-            }
-            if (offsetY > 0)
-            {
-                MV_CC_SetIntValue(handle_, "OffsetY", offsetY);
-            }
-
-            RCLCPP_INFO(this->get_logger(),
-                         "分辨率已设置: %ux%u (传感器最大: %ux%u, 偏移: %dx%d)",
-                         TARGET_WIDTH, TARGET_HEIGHT,
-                         stWidthMax.nCurValue, stHeightMax.nCurValue,
-                         offsetX, offsetY);
+            RCLCPP_WARN(this->get_logger(), "获取传感器最大分辨率失败，将使用相机默认分辨率");
+            return false;
         }
-        else
+
+        unsigned int sensorWidth = stWidthMax.nCurValue;
+        unsigned int sensorHeight = stHeightMax.nCurValue;
+
+        /* 设置宽度为传感器最大值 */
+        nRet = MV_CC_SetIntValue(handle_, "Width", sensorWidth);
+        if (MV_OK != nRet)
         {
-            RCLCPP_INFO(this->get_logger(), "分辨率已设置: %ux%u", TARGET_WIDTH, TARGET_HEIGHT);
+            RCLCPP_WARN(this->get_logger(), "设置宽度 %u 失败! nRet [0x%x]", sensorWidth, nRet);
+            return false;
         }
+
+        /* 设置高度为传感器最大值 */
+        nRet = MV_CC_SetIntValue(handle_, "Height", sensorHeight);
+        if (MV_OK != nRet)
+        {
+            RCLCPP_WARN(this->get_logger(), "设置高度 %u 失败! nRet [0x%x]", sensorHeight, nRet);
+            return false;
+        }
+
+        RCLCPP_INFO(this->get_logger(),
+                     "传感器全画幅采集: %ux%u -> 软件缩放至 %ux%u",
+                     sensorWidth, sensorHeight, TARGET_WIDTH, TARGET_HEIGHT);
 
         return true;
     }
@@ -585,6 +572,13 @@ private:
                 continue;
             }
 
+            /* 如果图像尺寸不是目标分辨率，则缩放到 TARGET_WIDTH x TARGET_HEIGHT */
+            if (static_cast<unsigned int>(bgr_image.cols) != TARGET_WIDTH ||
+                static_cast<unsigned int>(bgr_image.rows) != TARGET_HEIGHT)
+            {
+                resizeImage(bgr_image);
+            }
+
             /* 构建 ROS2 Image 消息并发布 */
             auto msg = cv_bridge::CvImage(
                            std_msgs::msg::Header(), "bgr8", bgr_image)
@@ -599,6 +593,35 @@ private:
         }
 
         RCLCPP_INFO(this->get_logger(), "取流线程已退出");
+    }
+
+    /**
+     * @brief 将全画幅 BGR 图像缩放到目标分辨率
+     * @details 将传感器全分辨率采集的图像缩放到 TARGET_WIDTH x TARGET_HEIGHT。
+     *          若 CUDA 可用，使用 GPU 加速缩放；否则使用 CPU cv::resize。
+     *          使用 INTER_LINEAR 插值以平衡速度和质量。
+     * @param[in,out] bgr_image 输入全分辨率 BGR 图像，输出缩放后的图像
+     */
+    void resizeImage(cv::Mat &bgr_image)
+    {
+#ifdef USE_CUDA
+        if (use_cuda_)
+        {
+            cv::cuda::GpuMat gpu_full, gpu_resized;
+            gpu_full.upload(bgr_image, cuda_stream_);
+            cv::cuda::resize(gpu_full, gpu_resized,
+                             cv::Size(TARGET_WIDTH, TARGET_HEIGHT),
+                             0, 0, cv::INTER_LINEAR, cuda_stream_);
+            gpu_resized.download(bgr_image, cuda_stream_);
+            cuda_stream_.waitForCompletion();
+            return;
+        }
+#endif
+        cv::Mat resized;
+        cv::resize(bgr_image, resized,
+                   cv::Size(TARGET_WIDTH, TARGET_HEIGHT),
+                   0, 0, cv::INTER_LINEAR);
+        bgr_image = resized;
     }
 
     /**

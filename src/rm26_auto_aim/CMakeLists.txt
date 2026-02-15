@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(rm_auto_aim)
+project(rm26_auto_aim)
 
 # Default to C++17
 if(NOT CMAKE_CXX_STANDARD)

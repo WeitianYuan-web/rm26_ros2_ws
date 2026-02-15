@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 自动瞄准可视化工具 — 订阅图像、检测结果、追踪结果并叠加显示
+支持本地窗口显示 + 局域网 MJPEG HTTP 流媒体
 
 订阅话题:
     /image_raw            (sensor_msgs/Image)           — 原始图像
@@ -8,16 +9,19 @@
     /tracker/target       (auto_aim_interfaces/Target)  — 追踪目标
 
 用法:
-    # 默认使用
-    python3 image_viewer.py
+    # 本地窗口显示
+    python3 image_viewer_tricker.py
 
-    # 指定图像话题
-    python3 image_viewer.py --topic /image_raw
+    # 开启网络流 (局域网浏览器访问 http://<IP>:8080)
+    python3 image_viewer_tricker.py --stream
 
-    # 不显示追踪信息 (只看检测)
-    python3 image_viewer.py --no-tracker
+    # 仅网络流 (无本地窗口，适合 SSH 无显示器)
+    python3 image_viewer_tricker.py --stream --headless
 
-快捷键:
+    # 自定义端口、画质、缩放
+    python3 image_viewer_tricker.py --stream --port 9090 --stream-quality 60 --stream-scale 0.5
+
+快捷键 (本地窗口):
     q / ESC  — 退出
     s        — 保存当前帧截图
     f        — 显示/隐藏帧率信息
@@ -29,17 +33,30 @@
 依赖:
     pip3 install opencv-python numpy
     (ROS2: rclpy, sensor_msgs, cv_bridge, auto_aim_interfaces)
+    (网络流: 无额外依赖，使用 Python 标准库)
 """
 
 import argparse
 import math
 import os
+import socket
+import socketserver
 import sys
+import threading
 import time
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import cv2
 import numpy as np
+
+# 尝试导入 turbojpeg (比 cv2.imencode 快 2-5 倍)
+try:
+    from turbojpeg import TurboJPEG
+    _tj = TurboJPEG()
+    HAS_TURBOJPEG = True
+except ImportError:
+    HAS_TURBOJPEG = False
 
 # ──────────────────────────────────────────────
 #  检测并配置显示器
@@ -112,6 +129,337 @@ COLOR_WHITE   = (255, 255, 255)
 COLOR_ORANGE  = (0, 165, 255)
 
 
+# ──────────────────────────────────────────────
+#  MJPEG HTTP 流媒体服务器 (低延迟优化版)
+# ──────────────────────────────────────────────
+
+# 嵌入式 HTML 查看页面 — 使用 JS 手动拉帧替代浏览器原生 MJPEG
+# 浏览器原生 <img src="stream"> 会有数秒缓冲，JS 逐帧替换可降至 ~1 帧延迟
+_HTML_PAGE = """<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Auto Aim Stream</title>
+<style>
+  body {{ margin:0; background:#111; display:flex; flex-direction:column;
+         align-items:center; justify-content:center; height:100vh; }}
+  img  {{ max-width:100%; max-height:90vh; image-rendering:auto; }}
+  .info {{ color:#aaa; font:14px monospace; margin-top:8px; }}
+</style>
+</head><body>
+<img id="view">
+<div class="info" id="info">Connecting...</div>
+<script>
+const img = document.getElementById('view');
+const info = document.getElementById('info');
+let frames = 0, lastTime = performance.now();
+
+function fetchFrame() {{
+    const t0 = performance.now();
+    fetch('/snapshot?' + t0)
+      .then(r => r.blob())
+      .then(blob => {{
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {{ URL.revokeObjectURL(url); requestAnimationFrame(fetchFrame); }};
+        img.onerror = () => {{ URL.revokeObjectURL(url); setTimeout(fetchFrame, 100); }};
+        img.src = url;
+        frames++;
+        const now = performance.now();
+        if (now - lastTime > 1000) {{
+          const fps = frames * 1000 / (now - lastTime);
+          const latency = (now - t0).toFixed(0);
+          info.textContent = 'FPS: ' + fps.toFixed(1) + '  Latency: ' + latency + 'ms';
+          frames = 0; lastTime = now;
+        }}
+      }})
+      .catch(() => setTimeout(fetchFrame, 200));
+}}
+fetchFrame();
+</script>
+</body></html>"""
+
+
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+    """
+    @brief 多线程 HTTP 服务器
+    @details 每个客户端连接使用独立线程处理，避免阻塞
+    """
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class MJPEGStreamHandler(BaseHTTPRequestHandler):
+    """
+    @brief 低延迟 MJPEG / 快照 HTTP 请求处理器
+    @details 支持三种端点:
+             /          — HTML 页面 (JS 逐帧拉取，最低延迟)
+             /snapshot  — 单帧 JPEG 快照 (供 JS fetch)
+             /mjpeg     — 传统 MJPEG 流 (兼容 VLC / img 标签)
+    """
+
+    def setup(self):
+        """
+        @brief 连接初始化，设置 TCP_NODELAY 消除 Nagle 延迟
+        """
+        super().setup()
+        try:
+            self.connection.setsockopt(
+                socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+
+    def do_GET(self):
+        if self.path == "/":
+            self._serve_html()
+        elif self.path.startswith("/snapshot"):
+            self._serve_snapshot()
+        elif self.path == "/mjpeg":
+            self._serve_mjpeg_stream()
+        elif self.path == "/status":
+            self._serve_status()
+        else:
+            self.send_error(404)
+
+    def _serve_html(self):
+        """
+        @brief 返回 HTML 查看页面
+        """
+        html = _HTML_PAGE.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
+
+    def _serve_snapshot(self):
+        """
+        @brief 返回最新一帧 JPEG 快照 (供 JS 逐帧拉取)
+        """
+        streamer = self.server.streamer
+        jpeg_bytes, _ = streamer.get_jpeg_frame()
+
+        if jpeg_bytes is None:
+            self.send_error(503, "No frame available")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(jpeg_bytes)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(jpeg_bytes)
+
+    def _serve_mjpeg_stream(self):
+        """
+        @brief 传统 MJPEG multipart 流 (兼容 VLC 等)
+        """
+        self.send_response(200)
+        self.send_header("Content-Type",
+                         "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        streamer = self.server.streamer
+        streamer.client_count_ += 1
+        streamer.get_logger().info(
+            f"MJPEG 客户端连接: {self.client_address[0]} "
+            f"(当前 {streamer.client_count_} 个)"
+        )
+        last_seq = -1
+
+        try:
+            while True:
+                jpeg_bytes, seq = streamer.get_jpeg_frame()
+                if jpeg_bytes is None or seq == last_seq:
+                    time.sleep(0.005)
+                    continue
+                last_seq = seq
+                self.wfile.write(b"--frame\r\n"
+                                 b"Content-Type: image/jpeg\r\n"
+                                 b"Content-Length: " +
+                                 str(len(jpeg_bytes)).encode() +
+                                 b"\r\n\r\n")
+                self.wfile.write(jpeg_bytes)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            streamer.client_count_ -= 1
+            streamer.get_logger().info(
+                f"MJPEG 客户端断开: {self.client_address[0]} "
+                f"(剩余 {streamer.client_count_} 个)"
+            )
+
+    def _serve_status(self):
+        """
+        @brief 返回 JSON 状态信息
+        """
+        streamer = self.server.streamer
+        encoder = "turbojpeg" if HAS_TURBOJPEG else "cv2"
+        status = (
+            f'{{"clients": {streamer.client_count_}, '
+            f'"fps": {streamer.fps_:.1f}, '
+            f'"quality": {streamer.jpeg_quality_}, '
+            f'"scale": {streamer.scale_}, '
+            f'"encoder": "{encoder}"}}'
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(status.encode())
+
+    def log_message(self, format, *args):
+        pass
+
+
+class MJPEGStreamer:
+    """
+    @brief 低延迟 MJPEG 流媒体管理器
+    @details 使用独立编码线程 + 帧序号机制，确保:
+             - 编码不阻塞 ROS2 主循环
+             - HTTP handler 只发送最新帧，跳过旧帧
+             - 无客户端时零 CPU 开销
+    """
+
+    def __init__(self, port, quality, scale, logger):
+        """
+        @brief 初始化流媒体服务器
+        @param port HTTP 监听端口
+        @param quality JPEG 压缩质量 (1-100)
+        @param scale 缩放比例 (0.0-1.0)
+        @param logger ROS2 logger
+        """
+        self.port_ = port
+        self.jpeg_quality_ = quality
+        self.scale_ = scale
+        self.logger_ = logger
+        self.client_count_ = 0
+        self.fps_ = 0.0
+
+        # 帧缓冲 (JPEG 编码后)
+        self._jpeg_lock = threading.Lock()
+        self._jpeg_buf = None
+        self._frame_seq = 0
+
+        # 原始帧队列 (主线程 -> 编码线程)
+        self._raw_lock = threading.Lock()
+        self._raw_frame = None
+        self._raw_new = threading.Event()
+
+        # 编码线程
+        self._encode_thread = threading.Thread(
+            target=self._encode_loop, daemon=True)
+        self._running = True
+
+        # HTTP 服务器 (多线程)
+        self._server = ThreadingHTTPServer(
+            ("0.0.0.0", port), MJPEGStreamHandler)
+        self._server.streamer = self
+        self._serve_thread = threading.Thread(
+            target=self._server.serve_forever, daemon=True)
+
+    def get_logger(self):
+        return self.logger_
+
+    def start(self):
+        """
+        @brief 启动编码线程和 HTTP 服务器
+        """
+        self._encode_thread.start()
+        self._serve_thread.start()
+        ip = self._get_local_ip()
+        self.logger_.info(
+            f"流媒体已启动 — 浏览器打开: http://{ip}:{self.port_}/"
+        )
+        encoder = "turbojpeg" if HAS_TURBOJPEG else "cv2.imencode"
+        self.logger_.info(
+            f"  画质: {self.jpeg_quality_}  缩放: {self.scale_}  "
+            f"编码器: {encoder}"
+        )
+
+    def stop(self):
+        self._running = False
+        self._raw_new.set()
+        self._server.shutdown()
+
+    def update_frame(self, frame, fps):
+        """
+        @brief 提交新帧到编码队列 (非阻塞，由主线程调用)
+        @param frame OpenCV BGR 图像
+        @param fps 当前帧率
+        """
+        self.fps_ = fps
+        if self.client_count_ <= 0:
+            return
+        with self._raw_lock:
+            self._raw_frame = frame
+        self._raw_new.set()
+
+    def get_jpeg_frame(self):
+        """
+        @brief 获取最新 JPEG 帧和序号 (HTTP handler 调用)
+        @return (jpeg_bytes, seq) 元组
+        """
+        with self._jpeg_lock:
+            return self._jpeg_buf, self._frame_seq
+
+    def _encode_loop(self):
+        """
+        @brief 独立编码线程：从原始帧队列取帧 → 缩放 → JPEG 编码
+        """
+        while self._running:
+            self._raw_new.wait(timeout=0.1)
+            self._raw_new.clear()
+
+            with self._raw_lock:
+                frame = self._raw_frame
+                self._raw_frame = None
+
+            if frame is None:
+                continue
+
+            # 缩放
+            if self.scale_ < 1.0:
+                h, w = frame.shape[:2]
+                new_w = int(w * self.scale_)
+                new_h = int(h * self.scale_)
+                frame = cv2.resize(frame, (new_w, new_h),
+                                   interpolation=cv2.INTER_LINEAR)
+
+            # JPEG 编码 (优先 turbojpeg)
+            jpeg_bytes = None
+            if HAS_TURBOJPEG:
+                try:
+                    jpeg_bytes = _tj.encode(frame, quality=self.jpeg_quality_)
+                except Exception:
+                    pass
+
+            if jpeg_bytes is None:
+                encode_params = [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality_]
+                ret, buf = cv2.imencode(".jpg", frame, encode_params)
+                if ret:
+                    jpeg_bytes = buf.tobytes()
+
+            if jpeg_bytes is not None:
+                with self._jpeg_lock:
+                    self._jpeg_buf = jpeg_bytes
+                    self._frame_seq += 1
+
+    @staticmethod
+    def _get_local_ip():
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "0.0.0.0"
+
+
 class ImageViewer(Node):
     """
     @brief 自动瞄准可视化节点
@@ -141,6 +489,17 @@ class ImageViewer(Node):
         self.window_width_ = args.width
         self.window_height_ = args.height
         self.topic_name_ = args.topic
+
+        # 网络流
+        self.streamer_ = None
+        self.headless_ = args.headless
+        if args.stream:
+            self.streamer_ = MJPEGStreamer(
+                port=args.port,
+                quality=args.stream_quality,
+                scale=args.stream_scale,
+                logger=self.get_logger(),
+            )
 
         # 检测/追踪数据缓存
         self.armors_msg_ = None
@@ -360,15 +719,10 @@ class ImageViewer(Node):
         panel_x = w - panel_w - 10
         panel_y = 10
 
-        # 半透明背景
-        overlay = display.copy()
-        cv2.rectangle(
-            overlay,
-            (panel_x, panel_y),
-            (panel_x + panel_w, panel_y + panel_h),
-            (0, 0, 0), -1,
-        )
-        cv2.addWeighted(overlay, 0.6, display, 0.4, 0, display)
+        # 半透明背景 — 仅对 ROI 区域混合，避免全图拷贝
+        roi = display[panel_y:panel_y + panel_h, panel_x:panel_x + panel_w]
+        dark = np.zeros_like(roi)
+        cv2.addWeighted(roi, 0.4, dark, 0.6, 0, roi)
 
         # 面板边框颜色取决于追踪状态
         border_color = COLOR_GREEN if target.tracking else COLOR_RED
@@ -575,32 +929,50 @@ class ImageViewer(Node):
 
     def run(self):
         """
-        @brief 主循环：处理 ROS2 回调 + OpenCV 窗口显示
+        @brief 主循环：处理 ROS2 回调 + OpenCV 窗口显示 + 网络流
+        @details 支持三种模式:
+                 1. 本地窗口 (默认)
+                 2. 本地窗口 + 网络流 (--stream)
+                 3. 仅网络流 (--stream --headless)
         """
-        if not ensure_display():
-            self.get_logger().error(
-                "未检测到可用的显示器。"
-                "请确保有物理显示器连接，或通过 X11 转发 (ssh -X) 连接。"
-                "也可手动设置: export DISPLAY=:0"
+        # 启动流媒体服务器
+        if self.streamer_:
+            self.streamer_.start()
+
+        # 判断是否需要本地窗口
+        use_gui = not self.headless_
+        if use_gui and not ensure_display():
+            if self.streamer_:
+                self.get_logger().warn(
+                    "未检测到显示器，自动切换为 headless 模式 (仅网络流)"
+                )
+                use_gui = False
+            else:
+                self.get_logger().error(
+                    "未检测到可用的显示器。"
+                    "请加 --stream --headless 使用纯网络流模式，"
+                    "或手动设置: export DISPLAY=:0"
+                )
+                return
+
+        window_name = None
+        if use_gui:
+            window_name = f"Auto Aim Viewer - {self.topic_name_}"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+
+            wait_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(
+                wait_frame, f"Waiting for: {self.topic_name_}",
+                (30, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.8, COLOR_WHITE, 2,
             )
-            return
-
-        window_name = f"Auto Aim Viewer - {self.topic_name_}"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-
-        # 等待画面
-        wait_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.putText(
-            wait_frame, f"Waiting for: {self.topic_name_}",
-            (30, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.8, COLOR_WHITE, 2,
-        )
-        cv2.putText(
-            wait_frame, "Press [q] to quit",
-            (30, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1,
-        )
-        cv2.imshow(window_name, wait_frame)
-
-        self.get_logger().info("窗口已打开，等待图像数据...")
+            cv2.putText(
+                wait_frame, "Press [q] to quit",
+                (30, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1,
+            )
+            cv2.imshow(window_name, wait_frame)
+            self.get_logger().info("窗口已打开，等待图像数据...")
+        else:
+            self.get_logger().info("Headless 模式，等待图像数据...")
 
         try:
             while rclpy.ok():
@@ -610,59 +982,67 @@ class ImageViewer(Node):
                 if self.current_frame_ is not None:
                     display = self.draw_overlay(self.current_frame_)
 
-                    # 第一帧到达时自适应窗口
-                    if self.first_frame_:
-                        self.first_frame_ = False
-                        img_h, img_w = display.shape[:2]
-                        if self.window_width_ and self.window_height_:
-                            cv2.resizeWindow(
-                                window_name,
-                                self.window_width_,
-                                self.window_height_,
+                    # 推送到网络流
+                    if self.streamer_:
+                        self.streamer_.update_frame(display, self.fps_)
+
+                    # 本地窗口显示
+                    if use_gui:
+                        if self.first_frame_:
+                            self.first_frame_ = False
+                            img_h, img_w = display.shape[:2]
+                            if self.window_width_ and self.window_height_:
+                                cv2.resizeWindow(
+                                    window_name,
+                                    self.window_width_,
+                                    self.window_height_,
+                                )
+                            else:
+                                max_w, max_h = 1280, 960
+                                scale = min(max_w / img_w, max_h / img_h, 1.0)
+                                win_w = int(img_w * scale)
+                                win_h = int(img_h * scale)
+                                cv2.resizeWindow(window_name, win_w, win_h)
+                            self.get_logger().info(
+                                f"收到图像: {img_w}x{img_h}, 窗口已调整"
                             )
-                        else:
-                            max_w, max_h = 1280, 960
-                            scale = min(max_w / img_w, max_h / img_h, 1.0)
-                            win_w = int(img_w * scale)
-                            win_h = int(img_h * scale)
-                            cv2.resizeWindow(window_name, win_w, win_h)
-                        self.get_logger().info(
-                            f"收到图像: {img_w}x{img_h}, 窗口已调整"
-                        )
+                        cv2.imshow(window_name, display)
 
-                    cv2.imshow(window_name, display)
-
-                key = cv2.waitKey(1) & 0xFF
-
-                if key == ord("q") or key == 27:
-                    self.get_logger().info("用户退出")
-                    break
-                elif key == ord("s"):
-                    if self.current_frame_ is not None:
-                        self.save_screenshot(self.current_frame_)
-                elif key == ord("f"):
-                    self.show_fps_ = not self.show_fps_
-                elif key == ord("c"):
-                    self.show_crosshair_ = not self.show_crosshair_
-                    state = "开启" if self.show_crosshair_ else "关闭"
-                    self.get_logger().info(f"十字准星: {state}")
-                elif key == ord("d"):
-                    self.show_detection_ = not self.show_detection_
-                    state = "开启" if self.show_detection_ else "关闭"
-                    self.get_logger().info(f"检测可视化: {state}")
-                elif key == ord("t"):
-                    self.show_tracker_ = not self.show_tracker_
-                    state = "开启" if self.show_tracker_ else "关闭"
-                    self.get_logger().info(f"追踪可视化: {state}")
-                elif key == ord(" "):
-                    self.paused_ = not self.paused_
-                    state = "暂停" if self.paused_ else "恢复"
-                    self.get_logger().info(f"显示已{state}")
+                # 键盘事件 (GUI 模式) 或短暂 sleep (headless)
+                if use_gui:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q") or key == 27:
+                        self.get_logger().info("用户退出")
+                        break
+                    elif key == ord("s"):
+                        if self.current_frame_ is not None:
+                            self.save_screenshot(self.current_frame_)
+                    elif key == ord("f"):
+                        self.show_fps_ = not self.show_fps_
+                    elif key == ord("c"):
+                        self.show_crosshair_ = not self.show_crosshair_
+                        state = "开启" if self.show_crosshair_ else "关闭"
+                        self.get_logger().info(f"十字准星: {state}")
+                    elif key == ord("d"):
+                        self.show_detection_ = not self.show_detection_
+                        state = "开启" if self.show_detection_ else "关闭"
+                        self.get_logger().info(f"检测可视化: {state}")
+                    elif key == ord("t"):
+                        self.show_tracker_ = not self.show_tracker_
+                        state = "开启" if self.show_tracker_ else "关闭"
+                        self.get_logger().info(f"追踪可视化: {state}")
+                    elif key == ord(" "):
+                        self.paused_ = not self.paused_
+                        state = "暂停" if self.paused_ else "恢复"
+                        self.get_logger().info(f"显示已{state}")
 
         except KeyboardInterrupt:
             self.get_logger().info("收到中断信号，退出...")
         finally:
-            cv2.destroyAllWindows()
+            if self.streamer_:
+                self.streamer_.stop()
+            if use_gui:
+                cv2.destroyAllWindows()
 
 
 def main():
@@ -690,7 +1070,33 @@ def main():
         "--no-tracker", action="store_true",
         help="不订阅追踪话题 (仅显示检测结果)",
     )
+
+    # ── 网络流参数 ──
+    parser.add_argument(
+        "--stream", action="store_true",
+        help="开启 MJPEG HTTP 网络流",
+    )
+    parser.add_argument(
+        "--headless", action="store_true",
+        help="无头模式 (不打开本地窗口，仅网络流)",
+    )
+    parser.add_argument(
+        "--port", "-p", type=int, default=8080,
+        help="网络流 HTTP 端口 (默认: 8080)",
+    )
+    parser.add_argument(
+        "--stream-quality", type=int, default=50,
+        help="网络流 JPEG 压缩质量 1-100 (默认: 50, 越低越省带宽)",
+    )
+    parser.add_argument(
+        "--stream-scale", type=float, default=0.75,
+        help="网络流缩放比例 0.1-1.0 (默认: 0.75, 越小越省 CPU/带宽)",
+    )
     args = parser.parse_args()
+
+    # headless 必须搭配 stream
+    if args.headless and not args.stream:
+        parser.error("--headless 需要搭配 --stream 使用")
 
     rclpy.init()
     node = ImageViewer(args)

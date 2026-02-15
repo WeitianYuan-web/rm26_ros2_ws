@@ -32,7 +32,7 @@ public:
     // 声明参数 - 电机1 (速度积分模式，可连续旋转)
     this->declare_parameter<std::string>("motor1_can_interface", "can0");
     this->declare_parameter<int>("motor1_id", 0x02);
-    this->declare_parameter<double>("motor1_max_velocity", 18.0);  // 电机1最大速度 rad/s
+    this->declare_parameter<double>("motor1_max_velocity", 8.0);  // 电机1最大速度 rad/s
     this->declare_parameter<int>("motor1_channel_index", 0);      // 电机1使用的通道索引 (ch0)
     this->declare_parameter<int>("motor1_control_rate", 200);     // 电机1控制环频率 Hz
 
@@ -44,12 +44,12 @@ public:
     this->declare_parameter<int>("motor2_channel_index", 1);      // 电机2使用的通道索引 (ch1)
 
     // 电机1控制参数
-    this->declare_parameter<double>("motor1_control_speed", 18.0);        // 电机1控制速度 rad/s
-    this->declare_parameter<double>("motor1_control_acceleration", 10.0); // 电机1加速度
+    this->declare_parameter<double>("motor1_control_speed", 8.0);        // 电机1控制速度 rad/s
+    this->declare_parameter<double>("motor1_control_acceleration", 5.0); // 电机1加速度
 
     // 电机2控制参数
-    this->declare_parameter<double>("motor2_control_speed", 1.0);        // 电机2控制速度 rad/s
-    this->declare_parameter<double>("motor2_control_acceleration", 1.0); // 电机2加速度
+    this->declare_parameter<double>("motor2_control_speed", 2.0);        // 电机2控制速度 rad/s
+    this->declare_parameter<double>("motor2_control_acceleration", 2.0); // 电机2加速度
 
     // 通用参数
     this->declare_parameter<int>("master_id", 0xFF);
@@ -62,9 +62,13 @@ public:
     // 追踪模式参数
     this->declare_parameter<double>("track_yaw_kp", 1.0);       // 追踪Yaw方向比例增益
     this->declare_parameter<double>("track_yaw_ki", 0.1);       // 追踪Yaw方向积分增益
-    this->declare_parameter<double>("track_pitch_kp", 1.0);     // 追踪Pitch方向比例增益
-    this->declare_parameter<double>("track_pitch_ki", 0.1);     // 追踪Pitch方向积分增益
+    this->declare_parameter<double>("track_pitch_kp", -0.4);     // 追踪Pitch方向比例增益
+    this->declare_parameter<double>("track_pitch_ki", -0.02);     // 追踪Pitch方向积分增益
     this->declare_parameter<double>("track_exit_timeout", 0.5); // 松开trigger后退出追踪的超时时间 s
+
+    // 弹道下坠补偿参数
+    this->declare_parameter<double>("bullet_velocity", 11.0);  // 弹丸初速度 m/s
+    this->declare_parameter<double>("gravity", 9.81);           // 重力加速度 m/s²
 
     // 获取参数
     motor1_can_interface_ = this->get_parameter("motor1_can_interface").as_string();
@@ -98,6 +102,9 @@ public:
     track_pitch_ki_ = this->get_parameter("track_pitch_ki").as_double();
     track_exit_timeout_ = this->get_parameter("track_exit_timeout").as_double();
 
+    bullet_velocity_ = this->get_parameter("bullet_velocity").as_double();
+    gravity_ = this->get_parameter("gravity").as_double();
+
     // 使用参数创建电机对象
     motor1_ = std::make_unique<RobStrideMotor>(
         motor1_can_interface_, 
@@ -121,6 +128,7 @@ public:
     RCLCPP_INFO(this->get_logger(), "  RC范围: %d~%d (中值%d)", rc_min_value_, rc_max_value_, rc_mid_value_);
     RCLCPP_INFO(this->get_logger(), "  追踪参数: Yaw(Kp=%.2f, Ki=%.2f), Pitch(Kp=%.2f, Ki=%.2f), 退出超时=%.1fs",
                 track_yaw_kp_, track_yaw_ki_, track_pitch_kp_, track_pitch_ki_, track_exit_timeout_);
+    RCLCPP_INFO(this->get_logger(), "  弹道补偿: 弹速=%.1f m/s, 重力=%.2f m/s²", bullet_velocity_, gravity_);
 
     // 创建发布者（用于监控当前目标位置）
     motor1_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
@@ -204,38 +212,76 @@ private:
     
     // 在单独线程中初始化，避免阻塞主线程
     std::thread init_thread([this, &motor, &initialized, motor_name]() {
-      try {
-        // 第一步：失能电机并清除错误（clear_error=1）
-        RCLCPP_INFO(this->get_logger(), "%s: 失能电机并清除错误...", motor_name.c_str());
-        motor->Disenable_Motor(1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      const int max_retries = 5;
 
-        // 第二步：读取当前电机模式
-        motor->Get_RobStrite_Motor_parameter(0x7005);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        // 第三步：如果不是CSP模式（mode=5），切换到CSP模式
-        if (motor->drw.run_mode.data != 5) {
-          RCLCPP_INFO(this->get_logger(), "%s当前模式: %.0f, 切换到CSP模式...", 
-                      motor_name.c_str(), motor->drw.run_mode.data);
-          motor->Set_RobStrite_Motor_parameter(0x7005, 5, 'j'); // 设置为CSP位置模式
+      /**
+       * @brief 设置CAN接收超时（2秒），防止 receive_status_frame() 永久阻塞
+       *
+       * 原始 receive() 在 timeout_sec=0 时不设置超时，若电机未上电或CAN断开，
+       * recv() 将永久阻塞导致初始化线程卡死。设置超时后，recv() 超时返回，
+       * receive_status_frame() 抛出异常，由重试循环处理。
+       */
+      struct timeval recv_timeout;
+      recv_timeout.tv_sec = 2;
+      recv_timeout.tv_usec = 0;
+      if (setsockopt(motor->socket_fd, SOL_SOCKET, SO_RCVTIMEO,
+                     &recv_timeout, sizeof(recv_timeout)) < 0) {
+        RCLCPP_ERROR(this->get_logger(), "%s: 设置CAN接收超时失败", motor_name.c_str());
+      }
+
+      for (int attempt = 1; attempt <= max_retries; ++attempt) {
+        try {
+          RCLCPP_INFO(this->get_logger(), "%s: 初始化尝试 %d/%d ...",
+                      motor_name.c_str(), attempt, max_retries);
+
+          // 第一步：失能电机并清除错误（clear_error=1）
+          RCLCPP_INFO(this->get_logger(), "%s: 失能电机并清除错误...", motor_name.c_str());
+          motor->Disenable_Motor(1);
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          
+
+          // 第二步：读取当前电机模式
           motor->Get_RobStrite_Motor_parameter(0x7005);
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          
+          // 第三步：如果不是CSP模式（mode=5），切换到CSP模式
+          if (motor->drw.run_mode.data != 5) {
+            RCLCPP_INFO(this->get_logger(), "%s当前模式: %.0f, 切换到CSP模式...", 
+                        motor_name.c_str(), motor->drw.run_mode.data);
+            motor->Set_RobStrite_Motor_parameter(0x7005, 5, 'j'); // 设置为CSP位置模式
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            motor->Get_RobStrite_Motor_parameter(0x7005);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          }
+          
+          // 第四步：使能电机
+          motor->enable_motor();
+          initialized = true;
+          RCLCPP_INFO(this->get_logger(), "%s已使能（CSP位置控制模式，错误已清除）", motor_name.c_str());
+
+          // 初始化成功，清除接收超时（恢复阻塞模式用于正常高频通信）
+          struct timeval no_timeout{0, 0};
+          setsockopt(motor->socket_fd, SOL_SOCKET, SO_RCVTIMEO,
+                     &no_timeout, sizeof(no_timeout));
+
+          return; // 成功，退出重试循环
+        } catch (const std::exception &e) {
+          RCLCPP_WARN(this->get_logger(), 
+                      "%s: 初始化尝试 %d/%d 失败: %s",
+                      motor_name.c_str(), attempt, max_retries, e.what());
+          if (attempt < max_retries) {
+            RCLCPP_INFO(this->get_logger(), "%s: 等待1秒后重试...", motor_name.c_str());
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+          }
         }
-        
-        // 第四步：使能电机
-        motor->enable_motor();
-        initialized = true;
-        RCLCPP_INFO(this->get_logger(), "%s已使能（CSP位置控制模式，错误已清除）", motor_name.c_str());
-      } catch (const std::exception &e) {
-        RCLCPP_ERROR(this->get_logger(), 
-                    "%s初始化失败: %s", motor_name.c_str(), e.what());
-        RCLCPP_ERROR(this->get_logger(), 
-                    "请检查: 1) CAN接口是否正确配置 2) 电机是否连接 3) 电机ID是否正确");
-        initialized = false;
       }
+
+      // 所有重试都失败
+      RCLCPP_ERROR(this->get_logger(), 
+                  "%s初始化失败（已重试%d次）", motor_name.c_str(), max_retries);
+      RCLCPP_ERROR(this->get_logger(), 
+                  "请检查: 1) CAN接口是否正确配置 2) 电机是否连接并上电 3) 电机ID是否正确");
+      initialized = false;
     });
     init_thread.detach(); // 分离线程，不等待完成
   }
@@ -371,9 +417,27 @@ private:
       return; // 距离过近或无效数据
     }
 
+    // 弹道下坠补偿：根据目标距离计算弹丸抛物线下坠量
+    // 物理模型: t = d/v0, Δh = ½gt², θ_comp = atan(Δh/d)
+    double distance = std::sqrt(x * x + y * y + z * z);
+    double t_flight = distance / bullet_velocity_;
+    double bullet_drop = 0.5 * gravity_ * t_flight * t_flight;
+    double drop_compensation = std::atan2(bullet_drop, distance); // 补偿角 (rad)，始终为正
+
     // 计算角度误差 (rad)
     double yaw_error = std::atan2(x, z);    // 正值 = 目标在右侧
-    double pitch_error = std::atan2(y, z);   // 正值 = 目标在下方
+
+    /**
+     * @brief Pitch误差融合弹道补偿
+     *
+     * 将弹道下坠补偿融入pitch误差信号，而不是作为累加偏移。
+     * 原始 pitch_error = atan2(y,z)：目标在画面中心时为0。
+     * 补偿后 pitch_error = atan2(y,z) - drop_compensation：
+     *   当目标在画面中心偏下 drop_compensation 时误差为0，
+     *   即 PI 控制器会驱动枪口抬高，使目标出现在画面偏下位置，
+     *   弹丸下落后刚好命中目标。
+     */
+    double pitch_error = std::atan2(y, z) - drop_compensation;
 
     // 增量式PI: Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)
     double yaw_delta = track_yaw_kp_ * (yaw_error - track_yaw_error_prev_)
@@ -387,8 +451,10 @@ private:
     // 更新电机1 (Yaw) 目标位置
     motor1_target_position_ += yaw_delta;
 
-    // 更新电机2 (Pitch) 目标位置，并限幅
+    // 更新电机2 (Pitch) 目标位置
     motor2_track_target_position_ += pitch_delta;
+
+    // 限幅
     motor2_track_target_position_ = std::max(motor2_min_position_,
                                      std::min(motor2_max_position_, motor2_track_target_position_));
 
@@ -396,13 +462,16 @@ private:
     static int track_log_counter = 0;
     if (++track_log_counter >= 30) { // 约每秒打印一次（假设30Hz检测频率）
       RCLCPP_INFO(this->get_logger(),
-                  "[追踪] 目标位置: (%.3f, %.3f, %.3f)m, "
-                  "角度误差: yaw=%.4f rad (%.2f deg), pitch=%.4f rad (%.2f deg), "
-                  "增量: yaw=%.4f, pitch=%.4f",
-                  x, y, z,
-                  yaw_error, yaw_error * 180.0 / M_PI,
-                  pitch_error, pitch_error * 180.0 / M_PI,
-                  yaw_delta, pitch_delta);
+                  "[追踪] 目标: (%.3f, %.3f, %.3f)m, 距离=%.2fm, "
+                  "误差: yaw=%.2f° pitch=%.2f°(含补偿), "
+                  "弹道补偿=%.2f° (下坠%.1fmm), "
+                  "motor2目标=%.4f rad",
+                  x, y, z, distance,
+                  yaw_error * 180.0 / M_PI,
+                  pitch_error * 180.0 / M_PI,
+                  drop_compensation * 180.0 / M_PI,
+                  bullet_drop * 1000.0,
+                  motor2_track_target_position_);
       track_log_counter = 0;
     }
   }
@@ -639,6 +708,10 @@ private:
   double track_yaw_error_prev_{0.0};                                ///< Yaw方向上一次误差
   double track_pitch_error_prev_{0.0};                              ///< Pitch方向上一次误差
   double motor2_track_target_position_{0.0};                        ///< 追踪模式下电机2目标位置
+
+  // 弹道下坠补偿参数
+  double bullet_velocity_;                                          ///< 弹丸初速度 m/s
+  double gravity_;                                                  ///< 重力加速度 m/s²
 };
 
 /**

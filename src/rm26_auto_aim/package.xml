@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>rm_auto_aim</name>
+  <name>rm26_auto_aim</name>
   <version>0.0.0</version>
   <description>自动瞄准功能包 - 包含海康威视相机图像采集与自动瞄准</description>
   <maintainer email="linkerhand@todo.todo">linkerhand</maintainer>

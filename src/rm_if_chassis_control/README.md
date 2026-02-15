@@ -29,7 +29,7 @@ ros2 run rm_if_chassis_control chassis_control_node
 
 # 指定串口和最大速度
 ros2 run rm_if_chassis_control chassis_control_node \
-  --ros-args -p serial_port:=/dev/ttyUSB0 -p max_vx:=2.0 -p max_vw:=5.0
+  --ros-args -p serial_port:=/dev/ttyUSB1 -p max_vx:=2.0 -p max_vw:=5.0
 ```
 
 ## 通道映射

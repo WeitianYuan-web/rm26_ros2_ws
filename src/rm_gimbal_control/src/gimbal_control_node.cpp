@@ -14,6 +14,7 @@
 #include <atomic>
 #include <memory>
 #include <cmath>
+#include <auto_aim_interfaces/msg/armors.hpp>
 
 /**
  * @brief 云台控制节点类，负责云台 Pitch/Yaw 轴运动控制
@@ -31,7 +32,7 @@ public:
     // 声明参数 - 电机1 (速度积分模式，可连续旋转)
     this->declare_parameter<std::string>("motor1_can_interface", "can0");
     this->declare_parameter<int>("motor1_id", 0x02);
-    this->declare_parameter<double>("motor1_max_velocity", 6.0);  // 电机1最大速度 rad/s
+    this->declare_parameter<double>("motor1_max_velocity", 18.0);  // 电机1最大速度 rad/s
     this->declare_parameter<int>("motor1_channel_index", 0);      // 电机1使用的通道索引 (ch0)
     this->declare_parameter<int>("motor1_control_rate", 200);     // 电机1控制环频率 Hz
 
@@ -43,8 +44,8 @@ public:
     this->declare_parameter<int>("motor2_channel_index", 1);      // 电机2使用的通道索引 (ch1)
 
     // 电机1控制参数
-    this->declare_parameter<double>("motor1_control_speed", 6.0);        // 电机1控制速度 rad/s
-    this->declare_parameter<double>("motor1_control_acceleration", 4.0); // 电机1加速度
+    this->declare_parameter<double>("motor1_control_speed", 18.0);        // 电机1控制速度 rad/s
+    this->declare_parameter<double>("motor1_control_acceleration", 10.0); // 电机1加速度
 
     // 电机2控制参数
     this->declare_parameter<double>("motor2_control_speed", 1.0);        // 电机2控制速度 rad/s
@@ -57,6 +58,13 @@ public:
     this->declare_parameter<int>("rc_max_value", 1684);
     this->declare_parameter<int>("rc_mid_value", 1024);
     this->declare_parameter<int>("deadzone", 5); // 遥控器数值死区
+
+    // 追踪模式参数
+    this->declare_parameter<double>("track_yaw_kp", 1.0);       // 追踪Yaw方向比例增益
+    this->declare_parameter<double>("track_yaw_ki", 0.1);       // 追踪Yaw方向积分增益
+    this->declare_parameter<double>("track_pitch_kp", 1.0);     // 追踪Pitch方向比例增益
+    this->declare_parameter<double>("track_pitch_ki", 0.1);     // 追踪Pitch方向积分增益
+    this->declare_parameter<double>("track_exit_timeout", 0.5); // 松开trigger后退出追踪的超时时间 s
 
     // 获取参数
     motor1_can_interface_ = this->get_parameter("motor1_can_interface").as_string();
@@ -84,6 +92,12 @@ public:
     rc_mid_value_ = this->get_parameter("rc_mid_value").as_int();
     deadzone_ = this->get_parameter("deadzone").as_int();
 
+    track_yaw_kp_ = this->get_parameter("track_yaw_kp").as_double();
+    track_yaw_ki_ = this->get_parameter("track_yaw_ki").as_double();
+    track_pitch_kp_ = this->get_parameter("track_pitch_kp").as_double();
+    track_pitch_ki_ = this->get_parameter("track_pitch_ki").as_double();
+    track_exit_timeout_ = this->get_parameter("track_exit_timeout").as_double();
+
     // 使用参数创建电机对象
     motor1_ = std::make_unique<RobStrideMotor>(
         motor1_can_interface_, 
@@ -105,6 +119,8 @@ public:
                 motor2_can_interface_.c_str(), motor2_id, motor2_min_position_, motor2_max_position_, motor2_channel_index_);
     RCLCPP_INFO(this->get_logger(), "  电机2 CSP参数: 控制速度=%.2f rad/s, 加速度=%.2f", motor2_control_speed_, motor2_control_acceleration_);
     RCLCPP_INFO(this->get_logger(), "  RC范围: %d~%d (中值%d)", rc_min_value_, rc_max_value_, rc_mid_value_);
+    RCLCPP_INFO(this->get_logger(), "  追踪参数: Yaw(Kp=%.2f, Ki=%.2f), Pitch(Kp=%.2f, Ki=%.2f), 退出超时=%.1fs",
+                track_yaw_kp_, track_yaw_ki_, track_pitch_kp_, track_pitch_ki_, track_exit_timeout_);
 
     // 创建发布者（用于监控当前目标位置）
     motor1_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
@@ -120,6 +136,18 @@ public:
         "/vt_remote/channels",
         qos,
         std::bind(&GimbalControlNode::rc_callback, this, std::placeholders::_1));
+
+    // 订阅 /vt_remote/switches 消息（用于追踪模式切换）
+    switches_subscription_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+        "/vt_remote/switches",
+        qos,
+        std::bind(&GimbalControlNode::switches_callback, this, std::placeholders::_1));
+
+    // 订阅 /detector/armors 消息（用于追踪模式）
+    armors_subscription_ = this->create_subscription<auto_aim_interfaces::msg::Armors>(
+        "/detector/armors",
+        rclcpp::SensorDataQoS(),
+        std::bind(&GimbalControlNode::armors_callback, this, std::placeholders::_1));
 
     // 创建电机1的高频控制定时器（速度积分 + 下发指令）
     int period_ms = 1000 / motor1_control_rate_;
@@ -177,17 +205,19 @@ private:
     // 在单独线程中初始化，避免阻塞主线程
     std::thread init_thread([this, &motor, &initialized, motor_name]() {
       try {
-        // 读取当前电机模式
+        // 第一步：失能电机并清除错误（clear_error=1）
+        RCLCPP_INFO(this->get_logger(), "%s: 失能电机并清除错误...", motor_name.c_str());
+        motor->Disenable_Motor(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // 第二步：读取当前电机模式
         motor->Get_RobStrite_Motor_parameter(0x7005);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         
-        // 如果不是CSP模式（mode=5），切换到CSP模式
+        // 第三步：如果不是CSP模式（mode=5），切换到CSP模式
         if (motor->drw.run_mode.data != 5) {
           RCLCPP_INFO(this->get_logger(), "%s当前模式: %.0f, 切换到CSP模式...", 
                       motor_name.c_str(), motor->drw.run_mode.data);
-          motor->Disenable_Motor(0);
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          
           motor->Set_RobStrite_Motor_parameter(0x7005, 5, 'j'); // 设置为CSP位置模式
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
           
@@ -195,9 +225,10 @@ private:
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         
+        // 第四步：使能电机
         motor->enable_motor();
         initialized = true;
-        RCLCPP_INFO(this->get_logger(), "%s已使能（CSP位置控制模式）", motor_name.c_str());
+        RCLCPP_INFO(this->get_logger(), "%s已使能（CSP位置控制模式，错误已清除）", motor_name.c_str());
       } catch (const std::exception &e) {
         RCLCPP_ERROR(this->get_logger(), 
                     "%s初始化失败: %s", motor_name.c_str(), e.what());
@@ -223,6 +254,11 @@ private:
       return;
     }
 
+    // 追踪模式下不处理遥控器控制
+    if (tracking_mode_) {
+      return;
+    }
+
     try {
       // 电机1：只更新目标速度，实际控制由高频定时器执行
       if (motor1_initialized_) {
@@ -244,6 +280,130 @@ private:
     } catch (const std::exception &e) {
       RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                             "控制电机时出错: %s", e.what());
+    }
+  }
+
+  /**
+   * @brief Switches消息回调，处理追踪模式切换
+   *
+   * switches消息格式: [mode, pause, fn_left, fn_right, trigger]
+   * - trigger (index 4): 0=松开, 1=按下
+   * - 按下trigger立即进入追踪模式
+   * - 松开trigger超过track_exit_timeout_后退出追踪模式
+   * @param msg /vt_remote/switches 消息
+   */
+  void switches_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
+    if (msg->data.size() < 5) {
+      return;
+    }
+
+    bool trigger_pressed = (msg->data[4] != 0);
+
+    if (trigger_pressed) {
+      // trigger按下 → 进入追踪模式
+      if (!tracking_mode_) {
+        tracking_mode_ = true;
+        // 重置增量PI控制器状态
+        track_yaw_error_prev_ = 0.0;
+        track_pitch_error_prev_ = 0.0;
+        // 初始化追踪模式下电机2的目标位置为当前实际位置
+        if (motor2_initialized_ && motor2_) {
+          motor2_track_target_position_ = motor2_->position_;
+        }
+        RCLCPP_INFO(this->get_logger(), ">>> 进入追踪模式");
+      }
+      // 重置松开计时
+      trigger_release_time_valid_ = false;
+    } else {
+      // trigger松开
+      if (tracking_mode_) {
+        if (!trigger_release_time_valid_) {
+          // 首次检测到松开，记录时间
+          trigger_release_time_ = std::chrono::steady_clock::now();
+          trigger_release_time_valid_ = true;
+        } else {
+          // 检查松开时间是否超过阈值
+          double elapsed = std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - trigger_release_time_).count();
+          if (elapsed > track_exit_timeout_) {
+            tracking_mode_ = false;
+            // 退出追踪时，将电机1目标位置更新为当前实际位置，确保摇杆控制平滑恢复
+            if (motor1_initialized_ && motor1_) {
+              motor1_target_position_ = motor1_->position_;
+            }
+            RCLCPP_INFO(this->get_logger(), "<<< 退出追踪模式 (松开超过%.1fs)", track_exit_timeout_);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * @brief Armors消息回调，在追踪模式下执行增量PI控制
+   *
+   * 使用增量式PI控制器: Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)
+   * - Yaw方向 (电机1): 根据目标水平角度偏差调整
+   * - Pitch方向 (电机2): 根据目标垂直角度偏差调整
+   * @param msg /detector/armors 消息（包含检测到的装甲板位姿信息）
+   */
+  void armors_callback(const auto_aim_interfaces::msg::Armors::SharedPtr msg) {
+    if (!tracking_mode_) {
+      return;
+    }
+    if (msg->armors.empty()) {
+      return;
+    }
+
+    // 选择距离图像中心最近的装甲板
+    const auto* best_armor = &msg->armors[0];
+    for (size_t i = 1; i < msg->armors.size(); ++i) {
+      if (msg->armors[i].distance_to_image_center < best_armor->distance_to_image_center) {
+        best_armor = &msg->armors[i];
+      }
+    }
+
+    // 获取装甲板在相机坐标系下的位置 (x=右, y=下, z=前)
+    double x = best_armor->pose.position.x;
+    double y = best_armor->pose.position.y;
+    double z = best_armor->pose.position.z;
+
+    if (z < 0.01) {
+      return; // 距离过近或无效数据
+    }
+
+    // 计算角度误差 (rad)
+    double yaw_error = std::atan2(x, z);    // 正值 = 目标在右侧
+    double pitch_error = std::atan2(y, z);   // 正值 = 目标在下方
+
+    // 增量式PI: Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)
+    double yaw_delta = track_yaw_kp_ * (yaw_error - track_yaw_error_prev_)
+                     + track_yaw_ki_ * yaw_error;
+    track_yaw_error_prev_ = yaw_error;
+
+    double pitch_delta = track_pitch_kp_ * (pitch_error - track_pitch_error_prev_)
+                       + track_pitch_ki_ * pitch_error;
+    track_pitch_error_prev_ = pitch_error;
+
+    // 更新电机1 (Yaw) 目标位置
+    motor1_target_position_ += yaw_delta;
+
+    // 更新电机2 (Pitch) 目标位置，并限幅
+    motor2_track_target_position_ += pitch_delta;
+    motor2_track_target_position_ = std::max(motor2_min_position_,
+                                     std::min(motor2_max_position_, motor2_track_target_position_));
+
+    // 定期打印追踪信息
+    static int track_log_counter = 0;
+    if (++track_log_counter >= 30) { // 约每秒打印一次（假设30Hz检测频率）
+      RCLCPP_INFO(this->get_logger(),
+                  "[追踪] 目标位置: (%.3f, %.3f, %.3f)m, "
+                  "角度误差: yaw=%.4f rad (%.2f deg), pitch=%.4f rad (%.2f deg), "
+                  "增量: yaw=%.4f, pitch=%.4f",
+                  x, y, z,
+                  yaw_error, yaw_error * 180.0 / M_PI,
+                  pitch_error, pitch_error * 180.0 / M_PI,
+                  yaw_delta, pitch_delta);
+      track_log_counter = 0;
     }
   }
 
@@ -301,16 +461,29 @@ private:
       dt = 0.05;
     }
 
-    // 使用当前速度做积分
-    double velocity = motor1_current_velocity_;
-    motor1_target_position_ += velocity * dt;
+    if (!tracking_mode_) {
+      // 普通模式：使用当前速度做积分
+      double velocity = motor1_current_velocity_;
+      motor1_target_position_ += velocity * dt;
+    }
+    // 追踪模式下，motor1_target_position_ 由 armors_callback 更新
 
-    // 下发 CSP 位置指令
+    // 下发电机1 CSP 位置指令
     motor1_->RobStrite_Motor_PosCSP_control(
         motor1_control_speed_,
         motor1_target_position_);
 
-    // 发布目标位置
+    // 追踪模式下同时以高频率下发电机2指令
+    if (tracking_mode_ && motor2_initialized_ && motor2_) {
+      motor2_->RobStrite_Motor_PosCSP_control(
+          motor2_control_speed_,
+          motor2_track_target_position_);
+      auto target_msg2 = std_msgs::msg::Float32();
+      target_msg2.data = motor2_track_target_position_;
+      motor2_target_position_publisher_->publish(target_msg2);
+    }
+
+    // 发布电机1目标位置
     auto target_msg = std_msgs::msg::Float32();
     target_msg.data = motor1_target_position_;
     motor1_target_position_publisher_->publish(target_msg);
@@ -318,14 +491,24 @@ private:
     // 定期打印信息（降低频率）
     static int counter1 = 0;
     if (++counter1 >= motor1_control_rate_) { // 约每秒打印一次
-      RCLCPP_INFO(this->get_logger(),
-                  "电机1(速度积分@%dHz): 速度=%.4f rad/s, "
-                  "目标位置=%.4f rad (%.2f deg), "
-                  "实际位置=%.4f rad (%.2f deg)",
-                  motor1_control_rate_,
-                  velocity,
-                  motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
-                  motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+      if (tracking_mode_) {
+        RCLCPP_INFO(this->get_logger(),
+                    "电机1(追踪模式@%dHz): "
+                    "目标位置=%.4f rad (%.2f deg), "
+                    "实际位置=%.4f rad (%.2f deg)",
+                    motor1_control_rate_,
+                    motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
+                    motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+      } else {
+        RCLCPP_INFO(this->get_logger(),
+                    "电机1(速度积分@%dHz): 速度=%.4f rad/s, "
+                    "目标位置=%.4f rad (%.2f deg), "
+                    "实际位置=%.4f rad (%.2f deg)",
+                    motor1_control_rate_,
+                    motor1_current_velocity_,
+                    motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
+                    motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+      }
       counter1 = 0;
     }
   }
@@ -439,6 +622,23 @@ private:
   int rc_max_value_;
   int rc_mid_value_;
   int deadzone_;
+
+  // 追踪模式相关
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr switches_subscription_;
+  rclcpp::Subscription<auto_aim_interfaces::msg::Armors>::SharedPtr armors_subscription_;
+  bool tracking_mode_{false};                                       ///< 是否处于追踪模式
+  std::chrono::steady_clock::time_point trigger_release_time_;      ///< trigger松开时间戳
+  bool trigger_release_time_valid_{false};                          ///< trigger松开时间是否有效
+  double track_exit_timeout_;                                       ///< 松开trigger后退出追踪超时 s
+
+  // 增量式PI控制器参数
+  double track_yaw_kp_;                                             ///< Yaw方向比例增益
+  double track_yaw_ki_;                                             ///< Yaw方向积分增益
+  double track_pitch_kp_;                                           ///< Pitch方向比例增益
+  double track_pitch_ki_;                                           ///< Pitch方向积分增益
+  double track_yaw_error_prev_{0.0};                                ///< Yaw方向上一次误差
+  double track_pitch_error_prev_{0.0};                              ///< Pitch方向上一次误差
+  double motor2_track_target_position_{0.0};                        ///< 追踪模式下电机2目标位置
 };
 
 /**

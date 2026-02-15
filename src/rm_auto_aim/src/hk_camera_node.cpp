@@ -9,6 +9,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 
@@ -29,6 +30,8 @@ static constexpr unsigned int TARGET_WIDTH = 640;
 static constexpr unsigned int TARGET_HEIGHT = 480;
 /** @brief 目标帧率 (fps) */
 static constexpr float TARGET_FPS = 60.0f;
+/** @brief 目标曝光时间 (微秒) */
+static constexpr float TARGET_EXPOSURE_TIME = 10000.0f;
 
 /**
  * @class HkCameraNode
@@ -57,6 +60,21 @@ public:
         /* 创建图像发布者，使用 SensorDataQoS 以获得更低延迟 */
         image_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
             "image_raw", rclcpp::SensorDataQoS());
+
+        /* 创建 CameraInfo 发布者 */
+        cam_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(
+            "camera_info", rclcpp::SensorDataQoS());
+
+        /* 声明相机内参参数（标定值，可通过 launch 文件或命令行覆盖） */
+        this->declare_parameter<double>("camera_info.fx", 877.4866);
+        this->declare_parameter<double>("camera_info.fy", 875.7676);
+        this->declare_parameter<double>("camera_info.cx", 297.0512);
+        this->declare_parameter<double>("camera_info.cy", 233.9948);
+        this->declare_parameter<std::vector<double>>("camera_info.distortion",
+            std::vector<double>{-0.056809, 0.158542, -0.001542, -0.001099, -0.464843});
+
+        /* 构建 CameraInfo 消息 */
+        initCameraInfo();
 
         /* 初始化相机 */
         if (!initCamera())
@@ -91,6 +109,52 @@ public:
     }
 
 private:
+    /**
+     * @brief 初始化 CameraInfo 消息
+     * @details 从 ROS2 参数读取相机内参 (fx, fy, cx, cy) 和畸变系数，
+     *          构建 sensor_msgs::msg::CameraInfo 消息。
+     *          用户应通过标定获取实际参数后在 launch 文件中覆盖默认值。
+     */
+    void initCameraInfo()
+    {
+        double fx = this->get_parameter("camera_info.fx").as_double();
+        double fy = this->get_parameter("camera_info.fy").as_double();
+        double cx = this->get_parameter("camera_info.cx").as_double();
+        double cy = this->get_parameter("camera_info.cy").as_double();
+        auto dist = this->get_parameter("camera_info.distortion").as_double_array();
+
+        cam_info_msg_.header.frame_id = "camera_optical_frame";
+        cam_info_msg_.width = TARGET_WIDTH;
+        cam_info_msg_.height = TARGET_HEIGHT;
+        cam_info_msg_.distortion_model = "plumb_bob";
+
+        /* 畸变系数 D: [k1, k2, p1, p2, k3] */
+        cam_info_msg_.d.resize(5, 0.0);
+        for (size_t i = 0; i < std::min(dist.size(), cam_info_msg_.d.size()); i++)
+        {
+            cam_info_msg_.d[i] = dist[i];
+        }
+
+        /* 相机内参矩阵 K (3x3, 行主序) */
+        cam_info_msg_.k = {fx, 0.0, cx,
+                           0.0, fy, cy,
+                           0.0, 0.0, 1.0};
+
+        /* 矫正矩阵 R (单目为单位阵) */
+        cam_info_msg_.r = {1.0, 0.0, 0.0,
+                           0.0, 1.0, 0.0,
+                           0.0, 0.0, 1.0};
+
+        /* 投影矩阵 P (3x4) */
+        cam_info_msg_.p = {fx, 0.0, cx, 0.0,
+                           0.0, fy, cy, 0.0,
+                           0.0, 0.0, 1.0, 0.0};
+
+        RCLCPP_INFO(this->get_logger(),
+                     "CameraInfo 已初始化: fx=%.1f, fy=%.1f, cx=%.1f, cy=%.1f",
+                     fx, fy, cx, cy);
+    }
+
     /**
      * @brief 初始化 CUDA GPU
      * @details 编译时启用 USE_CUDA 后，检测 Jetson 上的 CUDA 设备并设置 GPU。
@@ -218,6 +282,12 @@ private:
             RCLCPP_WARN(this->get_logger(), "设置触发模式失败! nRet [0x%x]", nRet);
         }
 
+        /* 5.5 设置像素格式为 BayerRG8 (原始 Bayer，支持 GPU 解马赛克，带宽减半) */
+        if (!setPixelFormat())
+        {
+            RCLCPP_WARN(this->get_logger(), "设置像素格式失败，将使用相机默认格式");
+        }
+
         /* 6. 设置分辨率为 640x480 (降低分辨率以减少 CPU/带宽负载) */
         if (!setResolution())
         {
@@ -228,6 +298,12 @@ private:
         if (!setFrameRate())
         {
             RCLCPP_WARN(this->get_logger(), "设置帧率失败，将使用相机默认帧率");
+        }
+
+        /* 7.5 设置曝光时间 */
+        if (!setExposure())
+        {
+            RCLCPP_WARN(this->get_logger(), "设置曝光时间失败，将使用相机默认曝光");
         }
 
         /* 8. 开始取流 */
@@ -251,6 +327,54 @@ private:
         RCLCPP_INFO(this->get_logger(), "PayloadSize: %u", payload_size_);
 
         return true;
+    }
+
+    /**
+     * @brief 设置相机像素格式为 BayerRG8
+     * @details 使用原始 Bayer 格式替代 YUV422，优势：
+     *          1. 数据量减半 (8bpp vs 16bpp)，提升 GigE 传输帧率
+     *          2. BayerRG8 直接支持 GPU 解马赛克 (cv::cuda::demosaicing)
+     *          3. 避免相机内部 ISP 处理延迟
+     *          如果 BayerRG8 不支持，依次尝试其他 Bayer 格式。
+     * @return true 设置成功
+     * @return false 设置失败
+     */
+    bool setPixelFormat()
+    {
+        int nRet = MV_OK;
+
+        /**
+         * @brief 按优先级尝试的像素格式列表
+         * @details BayerRG8 最常见，其次是其他 Bayer 格式
+         */
+        struct PixelFormatCandidate
+        {
+            unsigned int value;
+            const char *name;
+        };
+
+        const PixelFormatCandidate candidates[] = {
+            {PixelType_Gvsp_BayerRG8, "BayerRG8"},
+            {PixelType_Gvsp_BayerGR8, "BayerGR8"},
+            {PixelType_Gvsp_BayerGB8, "BayerGB8"},
+            {PixelType_Gvsp_BayerBG8, "BayerBG8"},
+        };
+
+        for (const auto &fmt : candidates)
+        {
+            nRet = MV_CC_SetEnumValue(handle_, "PixelFormat", fmt.value);
+            if (MV_OK == nRet)
+            {
+                RCLCPP_INFO(this->get_logger(),
+                             "像素格式已设置: %s (0x%x) — 支持 GPU 解马赛克",
+                             fmt.name, fmt.value);
+                return true;
+            }
+        }
+
+        RCLCPP_WARN(this->get_logger(),
+                     "所有 Bayer 格式均不支持，保持当前像素格式 (可能无法使用 GPU 加速)");
+        return false;
     }
 
     /**
@@ -364,6 +488,52 @@ private:
     }
 
     /**
+     * @brief 设置相机曝光时间
+     * @details 先关闭自动曝光（切换为手动模式），再设置目标曝光时间。
+     *          曝光时间单位为微秒 (us)。
+     * @return true 设置成功
+     * @return false 设置失败
+     */
+    bool setExposure()
+    {
+        int nRet = MV_OK;
+
+        /* 关闭自动曝光，切换为手动模式 (0 = Off) */
+        nRet = MV_CC_SetEnumValue(handle_, "ExposureAuto", 0);
+        if (MV_OK != nRet)
+        {
+            RCLCPP_WARN(this->get_logger(), "关闭自动曝光失败! nRet [0x%x]", nRet);
+            return false;
+        }
+
+        /* 设置曝光时间 (单位: 微秒) */
+        nRet = MV_CC_SetFloatValue(handle_, "ExposureTime", TARGET_EXPOSURE_TIME);
+        if (MV_OK != nRet)
+        {
+            RCLCPP_WARN(this->get_logger(), "设置曝光时间 %.0fus 失败! nRet [0x%x]",
+                         TARGET_EXPOSURE_TIME, nRet);
+            return false;
+        }
+
+        /* 读回实际曝光时间以确认 */
+        MVCC_FLOATVALUE stExposureTime;
+        memset(&stExposureTime, 0, sizeof(MVCC_FLOATVALUE));
+        if (MV_OK == MV_CC_GetFloatValue(handle_, "ExposureTime", &stExposureTime))
+        {
+            RCLCPP_INFO(this->get_logger(),
+                         "曝光时间已设置: 目标 %.0fus, 实际 %.1fus (范围: %.1f ~ %.1fus)",
+                         TARGET_EXPOSURE_TIME, stExposureTime.fCurValue,
+                         stExposureTime.fMin, stExposureTime.fMax);
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "曝光时间已设置: %.0fus", TARGET_EXPOSURE_TIME);
+        }
+
+        return true;
+    }
+
+    /**
      * @brief 取流循环，在独立线程中运行
      * @details 不断从相机获取帧数据，转换为 BGR8 格式，
      *          封装为 ROS2 Image 消息并发布。
@@ -422,6 +592,10 @@ private:
             msg->header.stamp = this->now();
             msg->header.frame_id = "camera_optical_frame";
             image_pub_->publish(*msg);
+
+            /* 同步发布 CameraInfo（与图像使用相同的 header） */
+            cam_info_msg_.header.stamp = msg->header.stamp;
+            cam_info_pub_->publish(cam_info_msg_);
         }
 
         RCLCPP_INFO(this->get_logger(), "取流线程已退出");
@@ -568,6 +742,22 @@ private:
             return true;
         }
 
+        /* YUV422_Packed (YUYV) -> BGR8: 使用 OpenCV 转换 */
+        if (enPixelType == PixelType_Gvsp_YUV422_Packed)
+        {
+            cv::Mat yuv_image(nHeight, nWidth, CV_8UC2, pData);
+            cv::cvtColor(yuv_image, bgr_image, cv::COLOR_YUV2BGR_YUYV);
+            return true;
+        }
+
+        /* YUV422_YUYV_Packed -> BGR8 */
+        if (enPixelType == PixelType_Gvsp_YUV422_YUYV_Packed)
+        {
+            cv::Mat yuv_image(nHeight, nWidth, CV_8UC2, pData);
+            cv::cvtColor(yuv_image, bgr_image, cv::COLOR_YUV2BGR_YUYV);
+            return true;
+        }
+
         /* 其他格式 (Bayer, YUV 等)，使用 SDK 进行转换 */
         MV_CC_PIXEL_CONVERT_PARAM stConvertParam;
         memset(&stConvertParam, 0, sizeof(MV_CC_PIXEL_CONVERT_PARAM));
@@ -635,6 +825,10 @@ private:
 
     /** @brief 图像发布者 */
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
+    /** @brief CameraInfo 发布者 */
+    rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr cam_info_pub_;
+    /** @brief CameraInfo 消息（预构建，每帧仅更新时间戳） */
+    sensor_msgs::msg::CameraInfo cam_info_msg_;
     /** @brief 取流线程 */
     std::thread grab_thread_;
     /** @brief 线程运行标志 */

@@ -110,9 +110,9 @@ public:
     /* -------- 声明 & 读取参数 -------- */
     this->declare_parameter<std::string>("serial_port", "/dev/ttyUSB0");
     this->declare_parameter<int>("baud_rate", 921600);
-    this->declare_parameter<double>("max_vx", 1.0);
-    this->declare_parameter<double>("max_vy", 1.0);
-    this->declare_parameter<double>("max_vw", 3.0);
+    this->declare_parameter<double>("max_vx", 3.0);
+    this->declare_parameter<double>("max_vy", 3.0);
+    this->declare_parameter<double>("max_vw", 6.28);
     this->declare_parameter<int>("deadzone", 20);
 
     serial_port_ = this->get_parameter("serial_port").as_string();

@@ -14,6 +14,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(auto_aim_interfaces REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 # 包含目录
 include_directories(include)
@@ -23,7 +25,7 @@ add_executable(gimbal_control_node
   src/gimbal_control_node.cpp
   src/motor_cfg.cpp
 )
-ament_target_dependencies(gimbal_control_node rclcpp std_msgs)
+ament_target_dependencies(gimbal_control_node rclcpp std_msgs auto_aim_interfaces geometry_msgs)
 
 # 安装目标
 install(TARGETS

@@ -3,7 +3,7 @@
 <package format="3">
   <name>rm_auto_aim</name>
   <version>0.0.0</version>
-  <description>自动瞄准功能包</description>
+  <description>自动瞄准功能包 - 包含海康威视相机图像采集与自动瞄准</description>
   <maintainer email="linkerhand@todo.todo">linkerhand</maintainer>
   <license>Apache-2.0</license>
 
@@ -11,6 +11,10 @@
 
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+
+  <build_depend>OpenCV</build_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

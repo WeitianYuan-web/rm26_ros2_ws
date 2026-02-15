@@ -8,8 +8,8 @@
  * 并异步接收里程计/速度反馈帧。
  *
  * 通道映射：
- *   - ch0  (index 0) → vx  x 方向线速度
- *   - ch1  (index 1) → vy  y 方向线速度
+ *   - ch2  (index 2) → vx  x 方向线速度
+ *   - ch3  (index 3) → vy  y 方向线速度
  *   - wheel(index 4) → vw  角速度（逆时针为正）
  *   - 通道值域 364 ~ 1684，中值 1024
  *
@@ -18,8 +18,15 @@
  *   - 反馈帧 MCU→PC: [0x55] + x(f32) + y(f32) + θ(f32) + vx(f32) + vy(f32)
  *                      + vw(f32) + feed_rpm(f32) + [0xAA] = 30B
  *
+ * 供弹速度控制逻辑：
+ *   - 订阅 /vt_remote/switches，通过 fn_right 跟踪 booster 电机高/低速模式
+ *   - 低速模式: 供弹速度固定为 0，fn_left 无效
+ *   - 高速模式: fn_left 按下在 -3200 RPM 与 1200 RPM 之间切换
+ *   - 从高速切回低速时，供弹速度自动归零
+ *
  * 订阅话题：
  *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
+ *   - /vt_remote/switches  (std_msgs/Int16MultiArray) : [mode, pause, fn_left, fn_right, trigger]
  *
  * 发布话题：
  *   - /chassis/feedback    (std_msgs/Float32MultiArray): [x, y, θ, vx, vy, vw, feed_rpm]
@@ -120,6 +127,11 @@ public:
       "/vt_remote/channels", 10,
       std::bind(&ChassisControlNode::channelsCallback, this, std::placeholders::_1));
 
+    /* -------- 订阅遥控器开关 (供弹控制) -------- */
+    sub_switches_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/switches", 10,
+      std::bind(&ChassisControlNode::switchesCallback, this, std::placeholders::_1));
+
     /* -------- 反馈发布者 -------- */
     pub_feedback_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
       "/chassis/feedback", 10);
@@ -178,9 +190,9 @@ private:
       return;
     }
 
-    /* ch0 → vx, ch1 → vy, wheel(index 4) → vw */
-    const float vx = mapChannelToVelocity(msg->data[0], max_vx_);
-    const float vy = mapChannelToVelocity(msg->data[1], max_vy_);
+    /* ch2 → vx, ch3 → vy, wheel(index 4) → vw */
+    const float vx = mapChannelToVelocity(msg->data[2], max_vx_);
+    const float vy = mapChannelToVelocity(msg->data[3], max_vy_);
     const float vw = mapChannelToVelocity(msg->data[4], max_vw_);
 
     {
@@ -193,6 +205,73 @@ private:
 
     channel_received_ = true;
     last_channel_time_ = this->now();
+  }
+
+  /**
+   * @brief 遥控器开关话题回调（供弹速度控制）
+   *
+   * @details
+   * - fn_right 上升沿: 切换 booster 高/低速模式跟踪
+   *   - 切回低速时: feed_rpm 归零
+   * - fn_left 上升沿 (仅高速模式有效):
+   *   - 在 -3200 RPM 和 1200 RPM 之间切换
+   *
+   * @param msg switches 数据 [mode, pause, fn_left, fn_right, trigger]
+   */
+  void switchesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  {
+    if (msg->data.size() < 5) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                           "switches 数据不完整: 期望 5 个值，收到 %zu", msg->data.size());
+      return;
+    }
+
+    const int16_t fn_left  = msg->data[2];  /* index 2: fn_left  */
+    const int16_t fn_right = msg->data[3];  /* index 3: fn_right */
+
+    /* ---- fn_right 上升沿: 跟踪 booster 高/低速模式 ---- */
+    if (fn_right == 1 && prev_fn_right_ == 0) {
+      is_booster_high_speed_ = !is_booster_high_speed_;
+
+      if (!is_booster_high_speed_) {
+        /* 切回低速模式: 供弹速度归零，重置切换状态 */
+        {
+          std::lock_guard<std::mutex> lock(vel_mutex_);
+          feed_rpm_ = 0.0f;
+        }
+        feed_is_negative_ = true;  /* 下次进入高速时，首次按 fn_left 为 -3200 */
+        RCLCPP_INFO(this->get_logger(),
+                    "Booster -> 低速模式, 供弹速度归零 (feed_rpm = 0)");
+      } else {
+        RCLCPP_INFO(this->get_logger(),
+                    "Booster -> 高速模式, 供弹速度待 fn_left 切换");
+      }
+    }
+    prev_fn_right_ = fn_right;
+
+    /* ---- fn_left 上升沿: 切换供弹速度 (仅高速模式有效) ---- */
+    if (fn_left == 1 && prev_fn_left_ == 0) {
+      if (is_booster_high_speed_) {
+        float new_feed;
+        if (feed_is_negative_) {
+          new_feed = -3200.0f;
+        } else {
+          new_feed = 1200.0f;
+        }
+        feed_is_negative_ = !feed_is_negative_;
+
+        {
+          std::lock_guard<std::mutex> lock(vel_mutex_);
+          feed_rpm_ = new_feed;
+        }
+        RCLCPP_INFO(this->get_logger(),
+                    "fn_left 按下 -> 供弹速度: %.0f RPM", new_feed);
+      } else {
+        RCLCPP_DEBUG(this->get_logger(),
+                     "fn_left 按下，但 Booster 处于低速模式，供弹速度保持 0");
+      }
+    }
+    prev_fn_left_ = fn_left;
   }
 
   /**
@@ -568,6 +647,17 @@ private:
   /** @brief 是否已收到过遥控数据 */
   bool channel_received_ = false;
 
+  /* ---- 供弹速度控制状态 ---- */
+
+  /** @brief Booster 是否处于高速模式 (由 fn_right 切换) */
+  bool is_booster_high_speed_ = false;
+  /** @brief fn_left 下次切换是否为 -3200 (true) 还是 1200 (false) */
+  bool feed_is_negative_ = true;
+  /** @brief fn_right 上一次状态 (边沿检测) */
+  int16_t prev_fn_right_ = 0;
+  /** @brief fn_left 上一次状态 (边沿检测) */
+  int16_t prev_fn_left_ = 0;
+
   /* ---- 时间戳 ---- */
 
   /** @brief 上次收到通道数据的时间 */
@@ -590,6 +680,8 @@ private:
   rclcpp::TimerBase::SharedPtr control_timer_;
   /** @brief 遥控器通道订阅者 */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_channels_;
+  /** @brief 遥控器开关订阅者 (供弹控制) */
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_switches_;
   /** @brief 反馈数据发布者 */
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_feedback_;
 };

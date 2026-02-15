@@ -15,7 +15,7 @@
  *   - /vt_remote/switches  (std_msgs/Int16MultiArray) : [mode, pause, fn_left, fn_right, trigger]
  *
  * 参数：
- *   - serial_port (string) : 串口设备路径，默认 "/dev/vt_usb"
+ *   - serial_port (string) : 串口设备路径，默认 "/dev/ttyUSB1"
  *   - baud_rate   (int)    : 波特率，默认 921600
  */
 
@@ -55,7 +55,7 @@ public:
   : Node("vt_remote_node"), serial_fd_(-1)
   {
     /* 声明 ROS 参数 */
-    this->declare_parameter<std::string>("serial_port", "/dev/vt_usb");
+    this->declare_parameter<std::string>("serial_port", "/dev/ttyUSB1");
     this->declare_parameter<int>("baud_rate", 921600);
 
     serial_port_ = this->get_parameter("serial_port").as_string();

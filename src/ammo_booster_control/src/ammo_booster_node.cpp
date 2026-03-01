@@ -3,9 +3,8 @@
  * @brief 弹仓拨弹控制节点
  *
  * @details
- * 订阅遥控器开关话题 /vt_remote/switches，通过 fn_right 按键切换
- * 供弹电机的低速 (500 RPM) 和高速 (4500 RPM) 两种模式。
- * 每次按下 fn_right（上升沿检测），速度模式在低速与高速之间切换。
+ * 订阅遥控器按键切换状态话题 /vt_remote/key_toggles，使用 fn_right 的切换状态
+ * 直接决定供弹电机低速 (500 RPM) 和高速 (4500 RPM) 两种模式。
  * 默认启动为低速模式。
  *
  * CAN 协议 (与 CtrBoard-H7 通信):
@@ -33,19 +32,18 @@
 #include <string>
 
 /**
- * @brief switches 数据索引定义
+ * @brief key_toggles 数据索引定义
  *
- * /vt_remote/switches 话题数据格式:
- *   [mode, pause, fn_left, fn_right, trigger]
+ * /vt_remote/key_toggles 话题数据格式:
+ *   [pause, fn_left, fn_right, trigger]
  */
-enum SwitchIndex
+enum KeyToggleIndex
 {
-  SW_MODE     = 0,  ///< 模式开关
-  SW_PAUSE    = 1,  ///< 暂停按键
-  SW_FN_LEFT  = 2,  ///< 自定义按键（左）
-  SW_FN_RIGHT = 3,  ///< 自定义按键（右）
-  SW_TRIGGER  = 4,  ///< 扳机
-  SW_COUNT    = 5   ///< 数据总数
+  TG_PAUSE    = 0,  ///< 暂停按键切换状态
+  TG_FN_LEFT  = 1,  ///< 自定义按键（左）切换状态
+  TG_FN_RIGHT = 2,  ///< 自定义按键（右）切换状态
+  TG_TRIGGER  = 3,  ///< 扳机切换状态
+  TG_COUNT    = 4   ///< 数据总数
 };
 
 /** @brief CAN 协议常量 */
@@ -57,7 +55,7 @@ static constexpr uint32_t CAN_FEEDBACK_ID   = 0x101;  ///< MCU -> PC: 电机反�
  * @brief 弹仓拨弹控制节点类
  *
  * 负责：
- * - 订阅 /vt_remote/switches 检测 fn_right 按键边沿
+ * - 订阅 /vt_remote/key_toggles 使用 fn_right 切换状态
  * - 通过 SocketCAN 向 CtrBoard-H7 发送速度指令
  * - 在低速/高速两种模式之间切换
  */
@@ -71,7 +69,6 @@ public:
   : Node("ammo_booster_node"),
     can_fd_(-1),
     is_high_speed_(false),
-    prev_fn_right_(0),
     current_speed_rpm_(0)
   {
     /* 声明 ROS 参数 */
@@ -95,10 +92,10 @@ public:
                    can_interface_.c_str());
     }
 
-    /* 订阅遥控器开关话题 */
-    sub_switches_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
-      "/vt_remote/switches", 10,
-      std::bind(&AmmoBoosterNode::switchesCallback, this, std::placeholders::_1));
+    /* 订阅遥控器按键切换状态话题 */
+    sub_key_toggles_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/key_toggles", 10,
+      std::bind(&AmmoBoosterNode::keyTogglesCallback, this, std::placeholders::_1));
 
     /* 创建速度指令发送定时器 */
     send_timer_ = this->create_wall_timer(
@@ -222,35 +219,28 @@ private:
   // =========================================================================
 
   /**
-   * @brief 遥控器开关话题回调
-   *
-   * 检测 fn_right 的上升沿（0->1），每次按下切换速度模式。
-   *
-   * @param msg switches 数据 [mode, pause, fn_left, fn_right, trigger]
+   * @brief 遥控器按键切换状态回调
+   * @param msg key_toggles 数据 [pause, fn_left, fn_right, trigger]
    */
-  void switchesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  void keyTogglesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
-    if (static_cast<int>(msg->data.size()) < SW_COUNT) {
+    if (static_cast<int>(msg->data.size()) < TG_COUNT) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                           "switches 数据长度不足: %zu (期望 %d)",
-                           msg->data.size(), SW_COUNT);
+                           "key_toggles 数据长度不足: %zu (期望 %d)",
+                           msg->data.size(), TG_COUNT);
       return;
     }
 
-    int16_t fn_right = msg->data[SW_FN_RIGHT];
-
-    /* 上升沿检测：前一次为 0，当前为 1 */
-    if (fn_right == 1 && prev_fn_right_ == 0) {
-      is_high_speed_ = !is_high_speed_;
+    const bool new_high_speed = (msg->data[TG_FN_RIGHT] != 0);
+    if (new_high_speed != is_high_speed_) {
+      is_high_speed_ = new_high_speed;
       current_speed_rpm_ = is_high_speed_ ? high_speed_rpm_ : low_speed_rpm_;
 
       RCLCPP_INFO(this->get_logger(),
-                  "fn_right 按下 -> 切换至%s模式 (%d RPM)",
+                  "fn_right 切换状态变化 -> 切换至%s模式 (%d RPM)",
                   is_high_speed_ ? "高速" : "低速",
                   current_speed_rpm_);
     }
-
-    prev_fn_right_ = fn_right;
   }
 
   /**
@@ -299,14 +289,11 @@ private:
   /** @brief 当前是否为高速模式 */
   bool is_high_speed_;
 
-  /** @brief fn_right 上一次的状态 (用于边沿检测) */
-  int16_t prev_fn_right_;
-
   /** @brief 当前目标速度 (RPM) */
   int current_speed_rpm_;
 
-  /** @brief 遥控器开关订阅者 */
-  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_switches_;
+  /** @brief 遥控器按键切换状态订阅者 */
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
 
   /** @brief 速度指令发送定时器 */
   rclcpp::TimerBase::SharedPtr send_timer_;

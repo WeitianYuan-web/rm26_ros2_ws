@@ -1,6 +1,6 @@
 # rm_if_chassis_control
 
-底盘运动控制 ROS2 功能包。订阅图传遥控器通道数据，将摇杆量映射为底盘三轴速度，通过 RS485 串口以 **200Hz** 频率发送控制帧到 STM32 MCU，并实时接收里程计/速度反馈帧。
+底盘运动控制 ROS2 功能包。订阅图传遥控器通道数据与按键切换状态，将摇杆量映射为底盘三轴速度，并根据按键切换状态控制供弹转速。节点通过 RS485 串口以 **200Hz** 频率发送控制帧到 STM32 MCU，并实时接收里程计/速度反馈帧。
 
 ## 环境要求
 
@@ -61,6 +61,14 @@ else:
 | 话题 | 类型 | 说明 |
 |------|------|------|
 | `/vt_remote/channels` | `std_msgs/Int16MultiArray` | 遥控器通道 [ch0, ch1, ch2, ch3, wheel] |
+| `/vt_remote/key_toggles` | `std_msgs/Int16MultiArray` | 按键切换状态 [pause, fn_left, fn_right, trigger] |
+
+### 供弹控制逻辑
+
+- `fn_right` 切换状态：`0` 为低速模式，`1` 为高速模式
+- 低速模式：`feed_rpm = 0`
+- 高速模式：当 `fn_left` 切换状态变化时，在 `-3200 RPM` 与 `1200 RPM` 间切换
+- 从高速切回低速时自动归零供弹速度
 
 ### 发布话题
 
@@ -74,9 +82,9 @@ else:
 |------|------|--------|------|
 | `serial_port` | string | `/dev/ttyUSB0` | 串口设备路径 |
 | `baud_rate` | int | `921600` | 波特率 |
-| `max_vx` | double | `1.0` | 最大 x 速度 (m/s) |
-| `max_vy` | double | `1.0` | 最大 y 速度 (m/s) |
-| `max_vw` | double | `3.0` | 最大角速度 (rad/s) |
+| `max_vx` | double | `3.0` | 最大 x 速度 (m/s) |
+| `max_vy` | double | `3.0` | 最大 y 速度 (m/s) |
+| `max_vw` | double | `6.28` | 最大角速度 (rad/s) |
 | `deadzone` | int | `20` | 摇杆死区（原始值单位） |
 
 ## 串口通信协议

@@ -19,14 +19,14 @@
  *                      + vw(f32) + feed_rpm(f32) + [0xAA] = 30B
  *
  * 供弹速度控制逻辑：
- *   - 订阅 /vt_remote/switches，通过 fn_right 跟踪 booster 电机高/低速模式
- *   - 低速模式: 供弹速度固定为 0，fn_left 无效
- *   - 高速模式: fn_left 按下在 -3200 RPM 与 1200 RPM 之间切换
+ *   - 订阅 /vt_remote/key_toggles，使用 fn_right 切换状态跟踪 booster 高/低速模式
+ *   - 低速模式: 供弹速度固定为 0，fn_left 切换变化忽略
+ *   - 高速模式: fn_left 切换状态变化时在 -3200 RPM 与 1200 RPM 之间切换
  *   - 从高速切回低速时，供弹速度自动归零
  *
  * 订阅话题：
  *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
- *   - /vt_remote/switches  (std_msgs/Int16MultiArray) : [mode, pause, fn_left, fn_right, trigger]
+ *   - /vt_remote/key_toggles  (std_msgs/Int16MultiArray) : [pause, fn_left, fn_right, trigger]
  *
  * 发布话题：
  *   - /chassis/feedback    (std_msgs/Float32MultiArray): [x, y, θ, vx, vy, vw, feed_rpm]
@@ -127,10 +127,10 @@ public:
       "/vt_remote/channels", 10,
       std::bind(&ChassisControlNode::channelsCallback, this, std::placeholders::_1));
 
-    /* -------- 订阅遥控器开关 (供弹控制) -------- */
-    sub_switches_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
-      "/vt_remote/switches", 10,
-      std::bind(&ChassisControlNode::switchesCallback, this, std::placeholders::_1));
+    /* -------- 订阅遥控器按键切换状态 (供弹控制) -------- */
+    sub_key_toggles_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/key_toggles", 10,
+      std::bind(&ChassisControlNode::keyTogglesCallback, this, std::placeholders::_1));
 
     /* -------- 反馈发布者 -------- */
     pub_feedback_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
@@ -208,70 +208,53 @@ private:
   }
 
   /**
-   * @brief 遥控器开关话题回调（供弹速度控制）
-   *
-   * @details
-   * - fn_right 上升沿: 切换 booster 高/低速模式跟踪
-   *   - 切回低速时: feed_rpm 归零
-   * - fn_left 上升沿 (仅高速模式有效):
-   *   - 在 -3200 RPM 和 1200 RPM 之间切换
-   *
-   * @param msg switches 数据 [mode, pause, fn_left, fn_right, trigger]
+   * @brief 遥控器按键切换状态回调（供弹速度控制）
+   * @param msg key_toggles 数据 [pause, fn_left, fn_right, trigger]
    */
-  void switchesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  void keyTogglesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
-    if (msg->data.size() < 5) {
+    if (msg->data.size() < 4) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                           "switches 数据不完整: 期望 5 个值，收到 %zu", msg->data.size());
+                           "key_toggles 数据不完整: 期望 4 个值，收到 %zu", msg->data.size());
       return;
     }
 
-    const int16_t fn_left  = msg->data[2];  /* index 2: fn_left  */
-    const int16_t fn_right = msg->data[3];  /* index 3: fn_right */
+    const bool fn_left_toggle = (msg->data[1] != 0);   /* index 1: fn_left */
+    const bool fn_right_toggle = (msg->data[2] != 0);  /* index 2: fn_right */
 
-    /* ---- fn_right 上升沿: 跟踪 booster 高/低速模式 ---- */
-    if (fn_right == 1 && prev_fn_right_ == 0) {
-      is_booster_high_speed_ = !is_booster_high_speed_;
-
+    /* fn_right 切换状态直接表示 booster 高/低速模式 */
+    if (fn_right_toggle != is_booster_high_speed_) {
+      is_booster_high_speed_ = fn_right_toggle;
       if (!is_booster_high_speed_) {
-        /* 切回低速模式: 供弹速度归零，重置切换状态 */
-        {
-          std::lock_guard<std::mutex> lock(vel_mutex_);
-          feed_rpm_ = 0.0f;
-        }
-        feed_is_negative_ = true;  /* 下次进入高速时，首次按 fn_left 为 -3200 */
+        std::lock_guard<std::mutex> lock(vel_mutex_);
+        feed_rpm_ = 0.0f;
         RCLCPP_INFO(this->get_logger(),
                     "Booster -> 低速模式, 供弹速度归零 (feed_rpm = 0)");
       } else {
+        fn_left_toggle_initialized_ = true;
+        prev_fn_left_toggle_ = fn_left_toggle;
         RCLCPP_INFO(this->get_logger(),
                     "Booster -> 高速模式, 供弹速度待 fn_left 切换");
       }
     }
-    prev_fn_right_ = fn_right;
 
-    /* ---- fn_left 上升沿: 切换供弹速度 (仅高速模式有效) ---- */
-    if (fn_left == 1 && prev_fn_left_ == 0) {
-      if (is_booster_high_speed_) {
-        float new_feed;
-        if (feed_is_negative_) {
-          new_feed = -3200.0f;
-        } else {
-          new_feed = 1200.0f;
-        }
-        feed_is_negative_ = !feed_is_negative_;
-
-        {
-          std::lock_guard<std::mutex> lock(vel_mutex_);
-          feed_rpm_ = new_feed;
-        }
-        RCLCPP_INFO(this->get_logger(),
-                    "fn_left 按下 -> 供弹速度: %.0f RPM", new_feed);
-      } else {
-        RCLCPP_DEBUG(this->get_logger(),
-                     "fn_left 按下，但 Booster 处于低速模式，供弹速度保持 0");
-      }
+    if (!fn_left_toggle_initialized_) {
+      prev_fn_left_toggle_ = fn_left_toggle;
+      fn_left_toggle_initialized_ = true;
+      return;
     }
-    prev_fn_left_ = fn_left;
+
+    /* 仅在高速模式下响应 fn_left 切换状态变化 */
+    if (is_booster_high_speed_ && fn_left_toggle != prev_fn_left_toggle_) {
+      const float new_feed = fn_left_toggle ? -3200.0f : 1200.0f;
+      {
+        std::lock_guard<std::mutex> lock(vel_mutex_);
+        feed_rpm_ = new_feed;
+      }
+      RCLCPP_INFO(this->get_logger(),
+                  "fn_left 切换 -> 供弹速度: %.0f RPM", new_feed);
+    }
+    prev_fn_left_toggle_ = fn_left_toggle;
   }
 
   /**
@@ -651,12 +634,10 @@ private:
 
   /** @brief Booster 是否处于高速模式 (由 fn_right 切换) */
   bool is_booster_high_speed_ = false;
-  /** @brief fn_left 下次切换是否为 -3200 (true) 还是 1200 (false) */
-  bool feed_is_negative_ = true;
-  /** @brief fn_right 上一次状态 (边沿检测) */
-  int16_t prev_fn_right_ = 0;
-  /** @brief fn_left 上一次状态 (边沿检测) */
-  int16_t prev_fn_left_ = 0;
+  /** @brief fn_left 切换状态是否已初始化 */
+  bool fn_left_toggle_initialized_ = false;
+  /** @brief fn_left 上一次切换状态 */
+  bool prev_fn_left_toggle_ = false;
 
   /* ---- 时间戳 ---- */
 
@@ -680,8 +661,8 @@ private:
   rclcpp::TimerBase::SharedPtr control_timer_;
   /** @brief 遥控器通道订阅者 */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_channels_;
-  /** @brief 遥控器开关订阅者 (供弹控制) */
-  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_switches_;
+  /** @brief 遥控器按键切换状态订阅者 (供弹控制) */
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
   /** @brief 反馈数据发布者 */
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_feedback_;
 };

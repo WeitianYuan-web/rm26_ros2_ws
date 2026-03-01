@@ -12,7 +12,8 @@
  *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
  *   - /vt_remote/mouse     (std_msgs/Int16MultiArray) : [mouse_x, mouse_y, mouse_z, left, right, middle]
  *   - /vt_remote/keyboard  (std_msgs/UInt16)          : 16位键盘按键状态
- *   - /vt_remote/switches  (std_msgs/Int16MultiArray) : [mode, pause, fn_left, fn_right, trigger]
+ *   - /vt_remote/switches     (std_msgs/Int16MultiArray) : [mode, pause, fn_left, fn_right, trigger]
+ *   - /vt_remote/key_toggles  (std_msgs/Int16MultiArray) : [pause, fn_left, fn_right, trigger]
  *
  * 参数：
  *   - serial_port (string) : 串口设备路径，默认 "/dev/ttyUSB1"
@@ -70,6 +71,8 @@ public:
       "/vt_remote/keyboard", 10);
     pub_switches_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/switches", 10);
+    pub_key_toggles_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/key_toggles", 10);
 
     /* 打开串口 */
     if (!openSerial()) {
@@ -383,6 +386,17 @@ private:
     };
     pub_switches_->publish(switches_msg);
 
+    /* 按键切换状态: [pause, fn_left, fn_right, trigger] */
+    updateKeyToggleStates(data);
+    auto key_toggles_msg = std_msgs::msg::Int16MultiArray();
+    key_toggles_msg.data = {
+      static_cast<int16_t>(pause_toggle_state_),
+      static_cast<int16_t>(fn_left_toggle_state_),
+      static_cast<int16_t>(fn_right_toggle_state_),
+      static_cast<int16_t>(trigger_toggle_state_)
+    };
+    pub_key_toggles_->publish(key_toggles_msg);
+
     /* 调试日志（DEBUG 级别，默认不输出） */
     RCLCPP_DEBUG(this->get_logger(),
                  "CH:[%4u %4u %4u %4u] W:%4u M:%s T:%d P:%d | "
@@ -393,6 +407,46 @@ private:
                  data.mouse_x, data.mouse_y, data.mouse_z,
                  data.mouse_left, data.mouse_right, data.mouse_middle,
                  data.keyboard);
+  }
+
+  /**
+   * @brief 更新四个按键的按下切换状态（上升沿翻转）
+   * @param data 已解析的遥控器数据
+   */
+  void updateKeyToggleStates(const RemoteData &data)
+  {
+    const bool pause_pressed = (data.pause != 0);
+    const bool fn_left_pressed = (data.fn_left != 0);
+    const bool fn_right_pressed = (data.fn_right != 0);
+    const bool trigger_pressed = (data.trigger != 0);
+
+    if (!key_toggle_initialized_) {
+      prev_pause_pressed_ = pause_pressed;
+      prev_fn_left_pressed_ = fn_left_pressed;
+      prev_fn_right_pressed_ = fn_right_pressed;
+      prev_trigger_pressed_ = trigger_pressed;
+      key_toggle_initialized_ = true;
+      return;
+    }
+
+    toggleOnRisingEdge(pause_pressed, prev_pause_pressed_, pause_toggle_state_);
+    toggleOnRisingEdge(fn_left_pressed, prev_fn_left_pressed_, fn_left_toggle_state_);
+    toggleOnRisingEdge(fn_right_pressed, prev_fn_right_pressed_, fn_right_toggle_state_);
+    toggleOnRisingEdge(trigger_pressed, prev_trigger_pressed_, trigger_toggle_state_);
+  }
+
+  /**
+   * @brief 上升沿检测并翻转目标状态
+   * @param current_pressed 当前是否按下
+   * @param prev_pressed 上次是否按下（函数内会更新）
+   * @param toggle_state 按键切换状态（函数内可能翻转）
+   */
+  static void toggleOnRisingEdge(bool current_pressed, bool &prev_pressed, bool &toggle_state)
+  {
+    if (current_pressed && !prev_pressed) {
+      toggle_state = !toggle_state;
+    }
+    prev_pressed = current_pressed;
   }
 
   // =========================================================================
@@ -437,6 +491,29 @@ private:
 
   /** @brief 开关按键发布者 */
   rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_switches_;
+
+  /** @brief 按键切换状态发布者 */
+  rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_key_toggles_;
+
+  /** @brief 按键切换状态是否已完成首次初始化 */
+  bool key_toggle_initialized_ = false;
+  /** @brief pause 上次按下状态 */
+  bool prev_pause_pressed_ = false;
+  /** @brief fn_left 上次按下状态 */
+  bool prev_fn_left_pressed_ = false;
+  /** @brief fn_right 上次按下状态 */
+  bool prev_fn_right_pressed_ = false;
+  /** @brief trigger 上次按下状态 */
+  bool prev_trigger_pressed_ = false;
+
+  /** @brief pause 切换状态 */
+  bool pause_toggle_state_ = false;
+  /** @brief fn_left 切换状态 */
+  bool fn_left_toggle_state_ = false;
+  /** @brief fn_right 切换状态 */
+  bool fn_right_toggle_state_ = false;
+  /** @brief trigger 切换状态 */
+  bool trigger_toggle_state_ = false;
 };
 
 // ===========================================================================

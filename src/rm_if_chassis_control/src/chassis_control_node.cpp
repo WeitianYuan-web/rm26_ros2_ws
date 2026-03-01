@@ -14,9 +14,13 @@
  *   - 通道值域 364 ~ 1684，中值 1024
  *
  * 串口协议（小端序）：
- *   - 控制帧 PC→MCU: [0xAA] + vx(f32) + vy(f32) + vw(f32) + feed_rpm(f32) = 17B
+ *   - 控制帧 PC→MCU:
+ *       [0xAA] + max_linear_accel(f32) + max_angular_accel(f32)
+ *              + max_linear_vel(f32)   + max_angular_vel(f32)
+ *              + vx(f32) + vy(f32) + vw(f32) + feed_rpm(f32) = 33B
  *   - 反馈帧 MCU→PC: [0x55] + x(f32) + y(f32) + θ(f32) + vx(f32) + vy(f32)
- *                      + vw(f32) + feed_rpm(f32) + [0xAA] = 30B
+ *                      + vw(f32) + wheel1_v(f32) + wheel2_v(f32)
+ *                      + wheel3_v(f32) + wheel4_v(f32) + feed_rpm(f32) + [0xAA] = 46B
  *
  * 供弹速度控制逻辑：
  *   - 订阅 /vt_remote/key_toggles，使用 fn_right 切换状态跟踪 booster 高/低速模式
@@ -29,14 +33,16 @@
  *   - /vt_remote/key_toggles  (std_msgs/Int16MultiArray) : [pause, fn_left, fn_right, trigger]
  *
  * 发布话题：
- *   - /chassis/feedback    (std_msgs/Float32MultiArray): [x, y, θ, vx, vy, vw, feed_rpm]
+ *   - /chassis/feedback    (std_msgs/Float32MultiArray):
+ *     [x, y, θ, vx, vy, vw, wheel1_v, wheel2_v, wheel3_v, wheel4_v, feed_rpm]
  *
  * 参数：
  *   - serial_port  (string) : 串口设备路径，默认 "/dev/chassis_usb"
  *   - baud_rate    (int)    : 波特率，默认 921600
- *   - max_vx       (double) : 最大 x 速度 (m/s)，默认 1.0
- *   - max_vy       (double) : 最大 y 速度 (m/s)，默认 1.0
- *   - max_vw       (double) : 最大角速度 (rad/s)，默认 3.0
+ *   - max_linear_accel  (double) : 最大线加速度 (m/s²)，默认 3.0
+ *   - max_angular_accel (double) : 最大角加速度 (rad/s²)，默认 6.0
+ *   - max_linear_vel    (double) : 最大线速度 (m/s)，默认 4.0
+ *   - max_angular_vel   (double) : 最大角速度 (rad/s)，默认 10.0
  *   - deadzone     (int)    : 摇杆死区（原始值），默认 20
  */
 
@@ -64,17 +70,17 @@
 
 /** @brief 控制帧帧头 */
 static constexpr uint8_t CTRL_FRAME_HEADER = 0xAA;
-/** @brief 控制帧长度 (1B 帧头 + 4×float32) */
-static constexpr size_t CTRL_FRAME_SIZE = 17;
+/** @brief 控制帧长度 (1B 帧头 + 8×float32) */
+static constexpr size_t CTRL_FRAME_SIZE = 33;
 
 /** @brief 反馈帧帧头 */
 static constexpr uint8_t FB_FRAME_HEADER = 0x55;
 /** @brief 反馈帧帧尾 */
 static constexpr uint8_t FB_FRAME_TAIL = 0xAA;
-/** @brief 反馈帧长度 (1B 帧头 + 7×float32 + 1B 帧尾) */
-static constexpr size_t FB_FRAME_SIZE = 30;
+/** @brief 反馈帧长度 (1B 帧头 + 11×float32 + 1B 帧尾) */
+static constexpr size_t FB_FRAME_SIZE = 46;
 /** @brief 反馈帧 float 数量 */
-static constexpr size_t FB_FLOAT_COUNT = 7;
+static constexpr size_t FB_FLOAT_COUNT = 11;
 
 /* ========================================================================= */
 /*  摇杆通道常量                                                              */
@@ -110,17 +116,19 @@ public:
     /* -------- 声明 & 读取参数 -------- */
     this->declare_parameter<std::string>("serial_port", "/dev/ttyUSB0");
     this->declare_parameter<int>("baud_rate", 921600);
-    this->declare_parameter<double>("max_vx", 3.0);
-    this->declare_parameter<double>("max_vy", 3.0);
-    this->declare_parameter<double>("max_vw", 6.28);
+    this->declare_parameter<double>("max_linear_accel", 2.0);
+    this->declare_parameter<double>("max_angular_accel", 6.0);
+    this->declare_parameter<double>("max_linear_vel", 3.0);
+    this->declare_parameter<double>("max_angular_vel", 6.0);
     this->declare_parameter<int>("deadzone", 20);
 
     serial_port_ = this->get_parameter("serial_port").as_string();
     baud_rate_   = this->get_parameter("baud_rate").as_int();
-    max_vx_      = this->get_parameter("max_vx").as_double();
-    max_vy_      = this->get_parameter("max_vy").as_double();
-    max_vw_      = this->get_parameter("max_vw").as_double();
-    deadzone_    = this->get_parameter("deadzone").as_int();
+    max_linear_accel_  = this->get_parameter("max_linear_accel").as_double();
+    max_angular_accel_ = this->get_parameter("max_angular_accel").as_double();
+    max_linear_vel_    = this->get_parameter("max_linear_vel").as_double();
+    max_angular_vel_   = this->get_parameter("max_angular_vel").as_double();
+    deadzone_          = this->get_parameter("deadzone").as_int();
 
     /* -------- 订阅遥控器通道 -------- */
     sub_channels_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
@@ -160,8 +168,8 @@ public:
                 "ChassisControlNode 已启动 | 串口: %s | 波特率: %d | 控制频率: 200Hz",
                 serial_port_.c_str(), baud_rate_);
     RCLCPP_INFO(this->get_logger(),
-                "最大速度: vx=%.2f vy=%.2f m/s, vw=%.2f rad/s | 死区: %d",
-                max_vx_, max_vy_, max_vw_, deadzone_);
+                "限制参数: 线加速度=%.2f 角加速度=%.2f | 线速度=%.2f 角速度=%.2f | 死区: %d",
+                max_linear_accel_, max_angular_accel_, max_linear_vel_, max_angular_vel_, deadzone_);
   }
 
   /**
@@ -191,9 +199,9 @@ private:
     }
 
     /* ch2 → vx, ch3 → vy, wheel(index 4) → vw */
-    const float vx = mapChannelToVelocity(msg->data[2], max_vx_);
-    const float vy = mapChannelToVelocity(msg->data[3], max_vy_);
-    const float vw = mapChannelToVelocity(msg->data[4], max_vw_);
+    const float vx = mapChannelToVelocity(msg->data[2], max_linear_vel_);
+    const float vy = mapChannelToVelocity(msg->data[3], max_linear_vel_);
+    const float vw = mapChannelToVelocity(msg->data[4], max_angular_vel_);
 
     {
       std::lock_guard<std::mutex> lock(vel_mutex_);
@@ -349,10 +357,19 @@ private:
   void sendControlFrame(float vx, float vy, float vw, float feed_rpm)
   {
     /* 帧头已在构造函数中预填充 */
-    std::memcpy(&ctrl_frame_[1],  &vx,       sizeof(float));
-    std::memcpy(&ctrl_frame_[5],  &vy,       sizeof(float));
-    std::memcpy(&ctrl_frame_[9],  &vw,       sizeof(float));
-    std::memcpy(&ctrl_frame_[13], &feed_rpm, sizeof(float));
+    const float max_linear_accel_f = static_cast<float>(max_linear_accel_);
+    const float max_angular_accel_f = static_cast<float>(max_angular_accel_);
+    const float max_linear_vel_f = static_cast<float>(max_linear_vel_);
+    const float max_angular_vel_f = static_cast<float>(max_angular_vel_);
+
+    std::memcpy(&ctrl_frame_[1],  &max_linear_accel_f,  sizeof(float));
+    std::memcpy(&ctrl_frame_[5],  &max_angular_accel_f, sizeof(float));
+    std::memcpy(&ctrl_frame_[9],  &max_linear_vel_f,    sizeof(float));
+    std::memcpy(&ctrl_frame_[13], &max_angular_vel_f,   sizeof(float));
+    std::memcpy(&ctrl_frame_[17], &vx,                  sizeof(float));
+    std::memcpy(&ctrl_frame_[21], &vy,                  sizeof(float));
+    std::memcpy(&ctrl_frame_[25], &vw,                  sizeof(float));
+    std::memcpy(&ctrl_frame_[29], &feed_rpm,            sizeof(float));
 
     const ssize_t written = ::write(serial_fd_, ctrl_frame_, CTRL_FRAME_SIZE);
     if (written < 0) {
@@ -405,7 +422,7 @@ private:
 
       /* 校验帧尾 */
       if (rx_buffer_[FB_FRAME_SIZE - 1] == FB_FRAME_TAIL) {
-        /* 解析 7 个 float32: x, y, theta, vx, vy, vw, feed_rpm */
+        /* 解析 11 个 float32: x, y, theta, vx, vy, vw, wheel1_v, wheel2_v, wheel3_v, wheel4_v, feed_rpm */
         float values[FB_FLOAT_COUNT];
         std::memcpy(values, &rx_buffer_[1], FB_FLOAT_COUNT * sizeof(float));
 
@@ -421,9 +438,10 @@ private:
         }
 
         RCLCPP_DEBUG(this->get_logger(),
-                     "反馈: Pos(%.3f, %.3f, %.3f) Vel(%.3f, %.3f, %.3f) Feed(%.0f)",
+                     "反馈: Pos(%.3f, %.3f, %.3f) Vel(%.3f, %.3f, %.3f) W(%.3f, %.3f, %.3f, %.3f) Feed(%.0f)",
                      values[0], values[1], values[2],
-                     values[3], values[4], values[5], values[6]);
+                     values[3], values[4], values[5],
+                     values[6], values[7], values[8], values[9], values[10]);
       }
 
       /* 移除已处理/无效的帧 */
@@ -597,12 +615,14 @@ private:
   std::string serial_port_;
   /** @brief 波特率 */
   int baud_rate_{};
-  /** @brief 最大 x 方向速度 (m/s) */
-  double max_vx_{};
-  /** @brief 最大 y 方向速度 (m/s) */
-  double max_vy_{};
+  /** @brief 最大线加速度 (m/s²) */
+  double max_linear_accel_{};
+  /** @brief 最大角加速度 (rad/s²) */
+  double max_angular_accel_{};
+  /** @brief 最大线速度 (m/s) */
+  double max_linear_vel_{};
   /** @brief 最大角速度 (rad/s) */
-  double max_vw_{};
+  double max_angular_vel_{};
   /** @brief 摇杆死区（原始值单位） */
   int deadzone_{};
 

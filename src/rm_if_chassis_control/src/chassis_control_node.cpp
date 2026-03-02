@@ -63,6 +63,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
+#include <std_msgs/msg/u_int16.hpp>
 
 /* ========================================================================= */
 /*  协议常量                                                                  */
@@ -96,6 +97,17 @@ static constexpr int16_t CH_MAX = 1684;
 static constexpr double CH_HALF_RANGE = static_cast<double>(CH_MAX - CH_CENTER);  // 660
 
 /**
+ * @brief 键盘位定义（/vt_remote/keyboard）
+ */
+enum KeyboardBit : uint16_t
+{
+  KB_W = (1u << 0),
+  KB_S = (1u << 1),
+  KB_A = (1u << 2),
+  KB_D = (1u << 3)
+};
+
+/**
  * @class ChassisControlNode
  * @brief 底盘运动控制 ROS2 节点
  *
@@ -120,6 +132,7 @@ public:
     this->declare_parameter<double>("max_angular_accel", 6.0);
     this->declare_parameter<double>("max_linear_vel", 3.0);
     this->declare_parameter<double>("max_angular_vel", 6.0);
+    this->declare_parameter<double>("input_priority_timeout", 0.3);
     this->declare_parameter<int>("deadzone", 20);
 
     serial_port_ = this->get_parameter("serial_port").as_string();
@@ -128,12 +141,23 @@ public:
     max_angular_accel_ = this->get_parameter("max_angular_accel").as_double();
     max_linear_vel_    = this->get_parameter("max_linear_vel").as_double();
     max_angular_vel_   = this->get_parameter("max_angular_vel").as_double();
+    input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
     deadzone_          = this->get_parameter("deadzone").as_int();
 
     /* -------- 订阅遥控器通道 -------- */
     sub_channels_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/channels", 10,
       std::bind(&ChassisControlNode::channelsCallback, this, std::placeholders::_1));
+
+    /* -------- 订阅键盘按键（WASD 底盘控制）-------- */
+    sub_keyboard_ = this->create_subscription<std_msgs::msg::UInt16>(
+      "/vt_remote/keyboard", 10,
+      std::bind(&ChassisControlNode::keyboardCallback, this, std::placeholders::_1));
+
+    /* -------- 订阅鼠标数据（发射控制）-------- */
+    sub_mouse_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/mouse", 10,
+      std::bind(&ChassisControlNode::mouseCallback, this, std::placeholders::_1));
 
     /* -------- 订阅遥控器按键切换状态 (供弹控制) -------- */
     sub_key_toggles_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
@@ -198,6 +222,11 @@ private:
       return;
     }
 
+    /* WASD 按键控制生效时，忽略通道映射 */
+    if (keyboard_wasd_active_) {
+      return;
+    }
+
     /* ch2 → vx, ch3 → vy, wheel(index 4) → vw */
     const float vx = mapChannelToVelocity(msg->data[2], max_linear_vel_);
     const float vy = mapChannelToVelocity(msg->data[3], max_linear_vel_);
@@ -216,6 +245,93 @@ private:
   }
 
   /**
+   * @brief 键盘数据回调（WASD 控制底盘）
+   * @param msg keyboard 位图
+   */
+  void keyboardCallback(const std_msgs::msg::UInt16::SharedPtr msg)
+  {
+    const uint16_t kb = msg->data;
+    const int w = (kb & KB_W) ? 1 : 0;
+    const int s = (kb & KB_S) ? 1 : 0;
+    const int a = (kb & KB_A) ? 1 : 0;
+    const int d = (kb & KB_D) ? 1 : 0;
+
+    float vx = static_cast<float>(w - s);
+    float vy = static_cast<float>(a - d);
+    const bool active = (vx != 0.0f) || (vy != 0.0f);
+
+    if (active && (vx != 0.0f) && (vy != 0.0f)) {
+      const float inv_sqrt2 = 0.70710678f;
+      vx *= inv_sqrt2;
+      vy *= inv_sqrt2;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(vel_mutex_);
+      keyboard_wasd_active_ = active;
+      if (active) {
+        target_vx_ = vx * static_cast<float>(max_linear_vel_);
+        target_vy_ = vy * static_cast<float>(max_linear_vel_);
+        target_vw_ = 0.0f;
+      }
+    }
+
+    channel_received_ = true;
+    last_channel_time_ = this->now();
+  }
+
+  /**
+   * @brief 鼠标数据回调（左键状态控制发射，右键长按切换供弹档位）
+   * @param msg mouse 数据 [x, y, z, left, right, middle]
+   */
+  void mouseCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  {
+    if (msg->data.size() < 6) {
+      return;
+    }
+
+    const bool left_pressed = (msg->data[3] != 0);
+    const bool right_pressed = (msg->data[4] != 0);
+    const auto now = this->now();
+    last_mouse_right_toggle_time_ = now;
+    mouse_right_toggle_time_valid_ = true;
+
+    if (!left_pressed) {
+      is_booster_high_speed_ = false;
+      right_hold_start_valid_ = false;
+      right_hold_active_1200_ = false;
+      {
+        std::lock_guard<std::mutex> lock(vel_mutex_);
+        feed_rpm_ = 0.0f;
+      }
+      return;
+    }
+
+    is_booster_high_speed_ = true;
+
+    if (!right_pressed) {
+      right_hold_start_valid_ = false;
+      right_hold_active_1200_ = false;
+      std::lock_guard<std::mutex> lock(vel_mutex_);
+      feed_rpm_ = -3200.0f;
+      return;
+    }
+
+    if (!right_hold_start_valid_) {
+      right_hold_start_time_ = now;
+      right_hold_start_valid_ = true;
+      right_hold_active_1200_ = false;
+    } else if ((now - right_hold_start_time_).seconds() >= 0.2) {
+      right_hold_active_1200_ = true;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(vel_mutex_);
+      feed_rpm_ = right_hold_active_1200_ ? 1200.0f : -3200.0f;
+    }
+  }
+
+  /**
    * @brief 遥控器按键切换状态回调（供弹速度控制）
    * @param msg key_toggles 数据 [pause, fn_left, fn_right, trigger]
    */
@@ -230,22 +346,32 @@ private:
     const bool fn_left_toggle = (msg->data[1] != 0);   /* index 1: fn_left */
     const bool fn_right_toggle = (msg->data[2] != 0);  /* index 2: fn_right */
 
-    /* fn_right 切换状态直接表示 booster 高/低速模式 */
-    if (fn_right_toggle != is_booster_high_speed_) {
+    const bool mouse_override_active =
+      mouse_right_toggle_time_valid_ &&
+      (this->now() - last_mouse_right_toggle_time_).seconds() < input_priority_timeout_;
+
+    if (mouse_override_active) {
+      return;
+    }
+
+    if (!fn_right_toggle_initialized_) {
+      prev_fn_right_toggle_ = fn_right_toggle;
+      fn_right_toggle_initialized_ = true;
+    } else if (fn_right_toggle != prev_fn_right_toggle_) {
       is_booster_high_speed_ = fn_right_toggle;
       if (!is_booster_high_speed_) {
         std::lock_guard<std::mutex> lock(vel_mutex_);
         feed_rpm_ = 0.0f;
         RCLCPP_INFO(this->get_logger(),
-                    "Booster -> 低速模式, 供弹速度归零 (feed_rpm = 0)");
+                    "fn_right 切换 -> Booster 低速模式, 供弹速度归零 (feed_rpm = 0)");
       } else {
         fn_left_toggle_initialized_ = true;
         prev_fn_left_toggle_ = fn_left_toggle;
         RCLCPP_INFO(this->get_logger(),
-                    "Booster -> 高速模式, 供弹速度待 fn_left 切换");
+                    "fn_right 切换 -> Booster 高速模式, 供弹速度待 fn_left 切换");
       }
     }
-
+    prev_fn_right_toggle_ = fn_right_toggle;
     if (!fn_left_toggle_initialized_) {
       prev_fn_left_toggle_ = fn_left_toggle;
       fn_left_toggle_initialized_ = true;
@@ -625,6 +751,8 @@ private:
   double max_angular_vel_{};
   /** @brief 摇杆死区（原始值单位） */
   int deadzone_{};
+  /** @brief 键鼠优先窗口时长（秒） */
+  double input_priority_timeout_{};
 
   /* ---- 串口 ---- */
 
@@ -658,6 +786,22 @@ private:
   bool fn_left_toggle_initialized_ = false;
   /** @brief fn_left 上一次切换状态 */
   bool prev_fn_left_toggle_ = false;
+  /** @brief fn_right 切换状态是否已初始化 */
+  bool fn_right_toggle_initialized_ = false;
+  /** @brief fn_right 上一次切换状态 */
+  bool prev_fn_right_toggle_ = false;
+  /** @brief 鼠标右键长按起始时间 */
+  rclcpp::Time right_hold_start_time_;
+  /** @brief 鼠标右键长按起始时间是否有效 */
+  bool right_hold_start_valid_ = false;
+  /** @brief 鼠标右键是否已激活1200档 */
+  bool right_hold_active_1200_ = false;
+  /** @brief 鼠标右键最近切换时间 */
+  rclcpp::Time last_mouse_right_toggle_time_;
+  /** @brief 鼠标右键切换时间是否有效 */
+  bool mouse_right_toggle_time_valid_ = false;
+  /** @brief WASD 键盘控制是否生效 */
+  bool keyboard_wasd_active_ = false;
 
   /* ---- 时间戳 ---- */
 
@@ -681,6 +825,10 @@ private:
   rclcpp::TimerBase::SharedPtr control_timer_;
   /** @brief 遥控器通道订阅者 */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_channels_;
+  /** @brief 键盘按键订阅者 */
+  rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr sub_keyboard_;
+  /** @brief 鼠标数据订阅者 */
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_mouse_;
   /** @brief 遥控器按键切换状态订阅者 (供弹控制) */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
   /** @brief 反馈数据发布者 */

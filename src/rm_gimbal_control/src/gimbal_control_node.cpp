@@ -59,6 +59,11 @@ public:
     this->declare_parameter<int>("rc_mid_value", 1024);
     this->declare_parameter<int>("deadzone", 5); // 遥控器数值死区
 
+    // 鼠标控制参数
+    this->declare_parameter<double>("mouse_yaw_sensitivity", 0.003);    // 鼠标X -> Yaw速度 (rad/s)/count
+    this->declare_parameter<double>("mouse_pitch_sensitivity", 0.0008); // 鼠标Y -> Pitch位置增量 rad/count
+    this->declare_parameter<double>("input_priority_timeout", 0.3);      // 键鼠优先窗口 s
+
     // 追踪模式参数
     this->declare_parameter<double>("track_yaw_kp", 1.5);       // 追踪Yaw方向比例增益
     this->declare_parameter<double>("track_yaw_ki", 0.4);       // 追踪Yaw方向积分增益
@@ -102,6 +107,9 @@ public:
     rc_max_value_ = this->get_parameter("rc_max_value").as_int();
     rc_mid_value_ = this->get_parameter("rc_mid_value").as_int();
     deadzone_ = this->get_parameter("deadzone").as_int();
+    mouse_yaw_sensitivity_ = this->get_parameter("mouse_yaw_sensitivity").as_double();
+    mouse_pitch_sensitivity_ = this->get_parameter("mouse_pitch_sensitivity").as_double();
+    input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
 
     track_yaw_kp_ = this->get_parameter("track_yaw_kp").as_double();
     track_yaw_ki_ = this->get_parameter("track_yaw_ki").as_double();
@@ -139,6 +147,8 @@ public:
                 motor2_can_interface_.c_str(), motor2_id, motor2_min_position_, motor2_max_position_, motor2_channel_index_);
     RCLCPP_INFO(this->get_logger(), "  电机2 CSP参数: 控制速度=%.2f rad/s, 加速度=%.2f", motor2_control_speed_, motor2_control_acceleration_);
     RCLCPP_INFO(this->get_logger(), "  RC范围: %d~%d (中值%d)", rc_min_value_, rc_max_value_, rc_mid_value_);
+    RCLCPP_INFO(this->get_logger(), "  鼠标控制: yaw灵敏度=%.4f, pitch灵敏度=%.4f, 优先窗口=%.2fs",
+                mouse_yaw_sensitivity_, mouse_pitch_sensitivity_, input_priority_timeout_);
     RCLCPP_INFO(this->get_logger(), "  追踪参数: Yaw(Kp=%.2f, Ki=%.2f), Pitch(Kp=%.2f, Ki=%.2f), 退出超时=%.1fs",
                 track_yaw_kp_, track_yaw_ki_, track_pitch_kp_, track_pitch_ki_, track_exit_timeout_);
     RCLCPP_INFO(this->get_logger(), "  Yaw偏移=%.4f rad (%.2f°), 前馈: 增益=%.2f, 滤波=%.2f, 死区=%.2f rad/s",
@@ -159,6 +169,12 @@ public:
         "/vt_remote/channels",
         qos,
         std::bind(&GimbalControlNode::rc_callback, this, std::placeholders::_1));
+
+    // 订阅 /vt_remote/mouse 消息（手动云台控制）
+    mouse_subscription_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+        "/vt_remote/mouse",
+        qos,
+        std::bind(&GimbalControlNode::mouse_callback, this, std::placeholders::_1));
 
     // 订阅 /vt_remote/switches 消息（用于追踪模式切换）
     switches_subscription_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
@@ -321,27 +337,73 @@ private:
     }
 
     try {
+      const auto now = this->now();
+      const bool mouse_valid =
+          mouse_time_valid_ &&
+          ((now - last_mouse_time_).seconds() <= input_priority_timeout_);
+
       // 电机1：只更新目标速度，实际控制由高频定时器执行
       if (motor1_initialized_) {
-        motor1_current_velocity_ = map_rc_to_velocity(
-            msg->data[motor1_channel_index_], motor1_max_velocity_);
+        if (mouse_valid && mouse_x_ != 0) {
+          double mouse_vel = -static_cast<double>(mouse_x_) * mouse_yaw_sensitivity_;
+          mouse_vel = std::max(-motor1_max_velocity_, std::min(motor1_max_velocity_, mouse_vel));
+          motor1_current_velocity_ = mouse_vel;
+        } else {
+          motor1_current_velocity_ = map_rc_to_velocity(
+              msg->data[motor1_channel_index_], motor1_max_velocity_);
+        }
       }
 
       // 控制电机2
       if (motor2_initialized_ && motor2_) {
-        control_motor(motor2_,
-                      msg->data[motor2_channel_index_],
-                      motor2_min_position_,
-                      motor2_max_position_,
-                      motor2_control_speed_,
-                      motor2_target_position_publisher_,
-                      "电机2",
-                      motor2_channel_index_);
+        if (mouse_valid && mouse_y_ != 0) {
+          if (!motor2_mouse_target_valid_) {
+            motor2_mouse_target_position_ = motor2_->position_;
+            motor2_mouse_target_valid_ = true;
+          }
+          motor2_mouse_target_position_ +=
+              -static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
+          motor2_mouse_target_position_ = std::max(
+              motor2_min_position_,
+              std::min(motor2_max_position_, motor2_mouse_target_position_));
+
+          motor2_->RobStrite_Motor_PosCSP_control(
+              motor2_control_speed_,
+              motor2_mouse_target_position_);
+
+          auto target_msg2 = std_msgs::msg::Float32();
+          target_msg2.data = static_cast<float>(motor2_mouse_target_position_);
+          motor2_target_position_publisher_->publish(target_msg2);
+        } else {
+          control_motor(motor2_,
+                        msg->data[motor2_channel_index_],
+                        motor2_min_position_,
+                        motor2_max_position_,
+                        motor2_control_speed_,
+                        motor2_target_position_publisher_,
+                        "电机2",
+                        motor2_channel_index_);
+          motor2_mouse_target_valid_ = false;
+        }
       }
     } catch (const std::exception &e) {
       RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                             "控制电机时出错: %s", e.what());
     }
+  }
+
+  /**
+   * @brief 鼠标消息回调，更新云台手动控制输入
+   * @param msg /vt_remote/mouse 消息 [mouse_x, mouse_y, mouse_z, left, right, middle]
+   */
+  void mouse_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
+    if (msg->data.size() < 2) {
+      return;
+    }
+    mouse_x_ = msg->data[0];
+    mouse_y_ = msg->data[1];
+    last_mouse_time_ = this->now();
+    mouse_time_valid_ = true;
   }
 
   /**
@@ -716,6 +778,7 @@ private:
   std::atomic<bool> motor2_initialized_;
   
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr rc_subscription_;
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr mouse_subscription_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_target_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_target_position_publisher_;
   rclcpp::TimerBase::SharedPtr motor1_control_timer_;      ///< 电机1高频控制定时器
@@ -745,6 +808,17 @@ private:
   int rc_max_value_;
   int rc_mid_value_;
   int deadzone_;
+  double mouse_yaw_sensitivity_;
+  double mouse_pitch_sensitivity_;
+  double input_priority_timeout_;
+
+  // 鼠标输入状态
+  int16_t mouse_x_{0};
+  int16_t mouse_y_{0};
+  rclcpp::Time last_mouse_time_;
+  bool mouse_time_valid_{false};
+  double motor2_mouse_target_position_{0.0};
+  bool motor2_mouse_target_valid_{false};
 
   // 追踪模式相关
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr switches_subscription_;

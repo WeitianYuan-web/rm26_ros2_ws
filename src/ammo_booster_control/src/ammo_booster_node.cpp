@@ -3,8 +3,8 @@
  * @brief 弹仓拨弹控制节点
  *
  * @details
- * 订阅遥控器按键切换状态话题 /vt_remote/key_toggles，使用 fn_right 的切换状态
- * 直接决定供弹电机低速 (500 RPM) 和高速 (4500 RPM) 两种模式。
+ * 订阅遥控器鼠标话题 /vt_remote/mouse，使用鼠标左键按下上升沿切换
+ * 发射电机低速 (500 RPM) 和高速 (4500 RPM) 两种模式。
  * 默认启动为低速模式。
  *
  * CAN 协议 (与 CtrBoard-H7 通信):
@@ -32,6 +32,19 @@
 #include <string>
 
 /**
+ * @brief mouse 数据索引定义
+ *
+ * /vt_remote/mouse 话题数据格式:
+ *   [mouse_x, mouse_y, mouse_z, left, right, middle]
+ */
+enum MouseIndex
+{
+  MOUSE_LEFT = 3,   ///< 鼠标左键
+  MOUSE_RIGHT = 4,  ///< 鼠标右键
+  MOUSE_COUNT = 6   ///< 数据总数
+};
+
+/**
  * @brief key_toggles 数据索引定义
  *
  * /vt_remote/key_toggles 话题数据格式:
@@ -49,13 +62,14 @@ enum KeyToggleIndex
 /** @brief CAN 协议常量 */
 static constexpr uint32_t CAN_SPEED_CMD_ID  = 0x100;  ///< PC -> MCU: 速度指令
 static constexpr uint32_t CAN_FEEDBACK_ID   = 0x101;  ///< MCU -> PC: 电机反馈
+static constexpr size_t FEEDBACK_DATA_COUNT = 4;
 
 /**
  * @class AmmoBoosterNode
  * @brief 弹仓拨弹控制节点类
  *
  * 负责：
- * - 订阅 /vt_remote/key_toggles 使用 fn_right 切换状态
+ * - 订阅 /vt_remote/mouse 使用鼠标左键上升沿切换速度模式
  * - 通过 SocketCAN 向 CtrBoard-H7 发送速度指令
  * - 在低速/高速两种模式之间切换
  */
@@ -76,11 +90,13 @@ public:
     this->declare_parameter<int>("low_speed_rpm", 500);
     this->declare_parameter<int>("high_speed_rpm", 4500);
     this->declare_parameter<int>("send_interval_ms", 50);
+    this->declare_parameter<double>("input_priority_timeout", 0.3);
 
     can_interface_    = this->get_parameter("can_interface").as_string();
     low_speed_rpm_    = this->get_parameter("low_speed_rpm").as_int();
     high_speed_rpm_   = this->get_parameter("high_speed_rpm").as_int();
     int send_interval = this->get_parameter("send_interval_ms").as_int();
+    input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
 
     /* 默认低速 */
     current_speed_rpm_ = low_speed_rpm_;
@@ -92,10 +108,17 @@ public:
                    can_interface_.c_str());
     }
 
-    /* 订阅遥控器按键切换状态话题 */
+    /* 订阅遥控器鼠标话题 */
+    sub_mouse_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/mouse", 10,
+      std::bind(&AmmoBoosterNode::mouseCallback, this, std::placeholders::_1));
     sub_key_toggles_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/key_toggles", 10,
       std::bind(&AmmoBoosterNode::keyTogglesCallback, this, std::placeholders::_1));
+
+    pub_feedback_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
+      "/ammo_booster/feedback", 10);
+    feedback_msg_.data.resize(FEEDBACK_DATA_COUNT, 0);
 
     /* 创建速度指令发送定时器 */
     send_timer_ = this->create_wall_timer(
@@ -219,28 +242,68 @@ private:
   // =========================================================================
 
   /**
-   * @brief 遥控器按键切换状态回调
+   * @brief 遥控器鼠标回调（左键状态控制发射速度）
+   * @param msg mouse 数据 [mouse_x, mouse_y, mouse_z, left, right, middle]
+   */
+  void mouseCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  {
+    if (static_cast<int>(msg->data.size()) < MOUSE_COUNT) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                           "mouse 数据长度不足: %zu (期望 %d)",
+                           msg->data.size(), MOUSE_COUNT);
+      return;
+    }
+
+    const bool left_pressed = (msg->data[MOUSE_LEFT] != 0);
+    last_mouse_left_toggle_time_ = this->now();
+    mouse_left_toggle_time_valid_ = true;
+
+    if (left_pressed != prev_mouse_left_pressed_) {
+      is_high_speed_ = left_pressed;
+      current_speed_rpm_ = is_high_speed_ ? high_speed_rpm_ : low_speed_rpm_;
+      RCLCPP_INFO(this->get_logger(),
+                  "鼠标左键状态变化 -> 切换至%s模式 (%d RPM)",
+                  is_high_speed_ ? "高速" : "低速",
+                  current_speed_rpm_);
+    }
+    prev_mouse_left_pressed_ = left_pressed;
+  }
+
+  /**
+   * @brief 遥控器按键切换状态回调（保留原有 fn_right 控制逻辑）
    * @param msg key_toggles 数据 [pause, fn_left, fn_right, trigger]
    */
   void keyTogglesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
     if (static_cast<int>(msg->data.size()) < TG_COUNT) {
-      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                           "key_toggles 数据长度不足: %zu (期望 %d)",
-                           msg->data.size(), TG_COUNT);
       return;
     }
 
-    const bool new_high_speed = (msg->data[TG_FN_RIGHT] != 0);
-    if (new_high_speed != is_high_speed_) {
+    const bool mouse_priority_active =
+      mouse_left_toggle_time_valid_ &&
+      (this->now() - last_mouse_left_toggle_time_).seconds() < input_priority_timeout_;
+    if (mouse_priority_active) {
+      return;
+    }
+
+    const bool fn_right_toggle = (msg->data[TG_FN_RIGHT] != 0);
+
+    if (!fn_right_toggle_initialized_) {
+      prev_fn_right_toggle_ = fn_right_toggle;
+      fn_right_toggle_initialized_ = true;
+      return;
+    }
+
+    if (fn_right_toggle != prev_fn_right_toggle_) {
+      const bool new_high_speed = fn_right_toggle;
       is_high_speed_ = new_high_speed;
       current_speed_rpm_ = is_high_speed_ ? high_speed_rpm_ : low_speed_rpm_;
-
       RCLCPP_INFO(this->get_logger(),
-                  "fn_right 切换状态变化 -> 切换至%s模式 (%d RPM)",
+                  "fn_right 切换 -> 切换至%s模式 (%d RPM)",
                   is_high_speed_ ? "高速" : "低速",
                   current_speed_rpm_);
     }
+    prev_fn_right_toggle_ = fn_right_toggle;
   }
 
   /**
@@ -254,6 +317,51 @@ private:
       return;
     }
     sendSpeedCommand(current_speed_rpm_);
+    readAndPublishFeedback();
+  }
+
+  void readAndPublishFeedback()
+  {
+    if (can_fd_ < 0) {
+      return;
+    }
+
+    struct can_frame frame {};
+    while (true) {
+      const ssize_t nbytes = recv(can_fd_, &frame, sizeof(frame), MSG_DONTWAIT);
+      if (nbytes < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+          break;
+        }
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "CAN 接收失败: %s", strerror(errno));
+        break;
+      }
+      if (nbytes == 0) {
+        break;
+      }
+      if (static_cast<size_t>(nbytes) != sizeof(frame)) {
+        continue;
+      }
+      if ((frame.can_id & CAN_SFF_MASK) != CAN_FEEDBACK_ID || frame.can_dlc < 8) {
+        continue;
+      }
+
+      const int16_t motor0_speed =
+        static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | frame.data[1]);
+      const int16_t motor0_current =
+        static_cast<int16_t>((static_cast<uint16_t>(frame.data[2]) << 8) | frame.data[3]);
+      const int16_t motor1_speed =
+        static_cast<int16_t>((static_cast<uint16_t>(frame.data[4]) << 8) | frame.data[5]);
+      const int16_t motor1_current =
+        static_cast<int16_t>((static_cast<uint16_t>(frame.data[6]) << 8) | frame.data[7]);
+
+      feedback_msg_.data[0] = motor0_speed;
+      feedback_msg_.data[1] = motor0_current;
+      feedback_msg_.data[2] = motor1_speed;
+      feedback_msg_.data[3] = motor1_current;
+      pub_feedback_->publish(feedback_msg_);
+    }
   }
 
   /**
@@ -288,18 +396,36 @@ private:
 
   /** @brief 当前是否为高速模式 */
   bool is_high_speed_;
+  /** @brief 键鼠优先窗口时长（秒） */
+  double input_priority_timeout_{};
+  /** @brief 鼠标左键最近切换时间 */
+  rclcpp::Time last_mouse_left_toggle_time_;
+  /** @brief 鼠标左键切换时间是否有效 */
+  bool mouse_left_toggle_time_valid_ = false;
+  /** @brief 鼠标左键上一次按下状态 */
+  bool prev_mouse_left_pressed_ = false;
+  /** @brief fn_right 切换状态是否已初始化 */
+  bool fn_right_toggle_initialized_ = false;
+  /** @brief fn_right 上一次切换状态 */
+  bool prev_fn_right_toggle_ = false;
 
   /** @brief 当前目标速度 (RPM) */
   int current_speed_rpm_;
 
+  /** @brief 遥控器鼠标订阅者 */
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_mouse_;
   /** @brief 遥控器按键切换状态订阅者 */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
+  /** @brief 电机反馈发布者 */
+  rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_feedback_;
 
   /** @brief 速度指令发送定时器 */
   rclcpp::TimerBase::SharedPtr send_timer_;
 
   /** @brief CAN 重连定时器 */
   rclcpp::TimerBase::SharedPtr reconnect_timer_;
+
+  std_msgs::msg::Int16MultiArray feedback_msg_;
 };
 
 // ===========================================================================

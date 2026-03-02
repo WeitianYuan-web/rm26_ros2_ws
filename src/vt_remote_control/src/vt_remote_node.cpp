@@ -11,13 +11,23 @@
  * 发布话题：
  *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
  *   - /vt_remote/mouse     (std_msgs/Int16MultiArray) : [mouse_x, mouse_y, mouse_z, left, right, middle]
- *   - /vt_remote/keyboard  (std_msgs/UInt16)          : 16位键盘按键状态
+ *   - /vt_remote/keyboard  (std_msgs/UInt16)          : 16位键盘按键状态（位映射见下）
+ *   - /vt_remote/keyboard_toggles (std_msgs/UInt16)   : 16位键盘按键切换状态（按下上升沿翻转）
+ *   - /vt_remote/keyboard_readable (std_msgs/String)  : 可读键盘状态字符串
+ *   - /vt_remote/mouse_toggles (std_msgs/Int16MultiArray) : [left_toggle, right_toggle, middle_toggle]
  *   - /vt_remote/switches     (std_msgs/Int16MultiArray) : [mode, pause, fn_left, fn_right, trigger]
  *   - /vt_remote/key_toggles  (std_msgs/Int16MultiArray) : [pause, fn_left, fn_right, trigger]
+ *
+ * 键盘位映射（0=未按下，1=按下）：
+ *   - bit0: W      bit4: Shift  bit8:  R   bit12: X
+ *   - bit1: S      bit5: Ctrl   bit9:  F   bit13: C
+ *   - bit2: A      bit6: Q      bit10: G   bit14: V
+ *   - bit3: D      bit7: E      bit11: Z   bit15: B
  *
  * 参数：
  *   - serial_port (string) : 串口设备路径，默认 "/dev/ttyUSB1"
  *   - baud_rate   (int)    : 波特率，默认 921600
+ *   - mouse_toggle_debounce (double) : 鼠标按键切换去抖时间（秒），默认 0.2
  */
 
 #include <fcntl.h>
@@ -34,6 +44,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int16.hpp>
 
 #include "vt_remote_control/vt_data_frame.hpp"
@@ -58,17 +69,25 @@ public:
     /* 声明 ROS 参数 */
     this->declare_parameter<std::string>("serial_port", "/dev/ttyUSB1");
     this->declare_parameter<int>("baud_rate", 921600);
+    this->declare_parameter<double>("mouse_toggle_debounce", 0.2);
 
     serial_port_ = this->get_parameter("serial_port").as_string();
     baud_rate_ = this->get_parameter("baud_rate").as_int();
+    mouse_toggle_debounce_ = this->get_parameter("mouse_toggle_debounce").as_double();
 
     /* 创建发布者 */
     pub_channels_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/channels", 10);
     pub_mouse_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/mouse", 10);
+    pub_mouse_toggles_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/mouse_toggles", 10);
     pub_keyboard_ = this->create_publisher<std_msgs::msg::UInt16>(
       "/vt_remote/keyboard", 10);
+    pub_keyboard_toggles_ = this->create_publisher<std_msgs::msg::UInt16>(
+      "/vt_remote/keyboard_toggles", 10);
+    pub_keyboard_readable_ = this->create_publisher<std_msgs::msg::String>(
+      "/vt_remote/keyboard_readable", 10);
     pub_switches_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/switches", 10);
     pub_key_toggles_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
@@ -370,10 +389,42 @@ private:
     };
     pub_mouse_->publish(mouse_msg);
 
-    /* 键盘数据 */
+    /* 鼠标按键切换状态: [left_toggle, right_toggle, middle_toggle] */
+    updateMouseToggleStates(data);
+    auto mouse_toggles_msg = std_msgs::msg::Int16MultiArray();
+    mouse_toggles_msg.data = {
+      static_cast<int16_t>(mouse_left_toggle_state_),
+      static_cast<int16_t>(mouse_right_toggle_state_),
+      static_cast<int16_t>(mouse_middle_toggle_state_)
+    };
+    pub_mouse_toggles_->publish(mouse_toggles_msg);
+
+    /**
+     * @brief 键盘数据（16位位图）
+     *
+     * 位定义：
+     * bit0~bit15 = [W, S, A, D, Shift, Ctrl, Q, E, R, F, G, Z, X, C, V, B]
+     * 0 表示未按下，1 表示按下。
+     */
     auto keyboard_msg = std_msgs::msg::UInt16();
     keyboard_msg.data = data.keyboard;
     pub_keyboard_->publish(keyboard_msg);
+
+    /* 键盘切换状态（16位位图，上升沿翻转） */
+    updateKeyboardToggleState(data.keyboard);
+    auto keyboard_toggles_msg = std_msgs::msg::UInt16();
+    keyboard_toggles_msg.data = keyboard_toggle_state_;
+    pub_keyboard_toggles_->publish(keyboard_toggles_msg);
+
+    /**
+     * @brief 可读键盘状态字符串
+     *
+     * 键顺序：
+     * W, S, A, D, Shift, Ctrl, Q, E, R, F, G, Z, X, C, V, B
+     */
+    auto keyboard_readable_msg = std_msgs::msg::String();
+    keyboard_readable_msg.data = buildKeyboardReadableString(data.keyboard);
+    pub_keyboard_readable_->publish(keyboard_readable_msg);
 
     /* 开关与按键: [mode, pause, fn_left, fn_right, trigger] */
     auto switches_msg = std_msgs::msg::Int16MultiArray();
@@ -449,6 +500,114 @@ private:
     prev_pressed = current_pressed;
   }
 
+  /**
+   * @brief 上升沿检测并翻转目标状态（带最小间隔去抖）
+   * @param current_pressed 当前是否按下
+   * @param prev_pressed 上次是否按下（函数内会更新）
+   * @param toggle_state 按键切换状态（函数内可能翻转）
+   * @param now 当前时间
+   * @param last_toggle_time 上次翻转时间
+   * @param has_last_toggle_time 上次翻转时间是否有效
+   * @param debounce_seconds 去抖时间（秒）
+   */
+  static void toggleOnRisingEdgeWithDebounce(
+    bool current_pressed,
+    bool &prev_pressed,
+    bool &toggle_state,
+    const rclcpp::Time &now,
+    rclcpp::Time &last_toggle_time,
+    bool &has_last_toggle_time,
+    double debounce_seconds)
+  {
+    if (current_pressed && !prev_pressed) {
+      const bool debounce_passed =
+        !has_last_toggle_time || (now - last_toggle_time).seconds() >= debounce_seconds;
+      if (debounce_passed) {
+        toggle_state = !toggle_state;
+        last_toggle_time = now;
+        has_last_toggle_time = true;
+      }
+    }
+    prev_pressed = current_pressed;
+  }
+
+  /**
+   * @brief 更新鼠标三键的按下切换状态（上升沿翻转）
+   * @param data 已解析的遥控器数据
+   */
+  void updateMouseToggleStates(const RemoteData &data)
+  {
+    const bool left_pressed = (data.mouse_left != 0);
+    const bool right_pressed = (data.mouse_right != 0);
+    const bool middle_pressed = (data.mouse_middle != 0);
+    const auto now = this->now();
+
+    if (!mouse_toggle_initialized_) {
+      prev_mouse_left_pressed_ = left_pressed;
+      prev_mouse_right_pressed_ = right_pressed;
+      prev_mouse_middle_pressed_ = middle_pressed;
+      mouse_toggle_initialized_ = true;
+      return;
+    }
+
+    toggleOnRisingEdgeWithDebounce(
+      left_pressed, prev_mouse_left_pressed_, mouse_left_toggle_state_,
+      now, last_mouse_left_toggle_time_, has_mouse_left_toggle_time_, mouse_toggle_debounce_);
+    toggleOnRisingEdgeWithDebounce(
+      right_pressed, prev_mouse_right_pressed_, mouse_right_toggle_state_,
+      now, last_mouse_right_toggle_time_, has_mouse_right_toggle_time_, mouse_toggle_debounce_);
+    toggleOnRisingEdgeWithDebounce(
+      middle_pressed, prev_mouse_middle_pressed_, mouse_middle_toggle_state_,
+      now, last_mouse_middle_toggle_time_, has_mouse_middle_toggle_time_, mouse_toggle_debounce_);
+  }
+
+  /**
+   * @brief 更新16位键盘按键切换状态（逐位上升沿翻转）
+   * @param keyboard 当前键盘按键位图
+   */
+  void updateKeyboardToggleState(uint16_t keyboard)
+  {
+    if (!keyboard_toggle_initialized_) {
+      prev_keyboard_pressed_ = keyboard;
+      keyboard_toggle_initialized_ = true;
+      return;
+    }
+
+    const uint16_t rising_edges = static_cast<uint16_t>(keyboard & (~prev_keyboard_pressed_));
+    keyboard_toggle_state_ = static_cast<uint16_t>(keyboard_toggle_state_ ^ rising_edges);
+    prev_keyboard_pressed_ = keyboard;
+  }
+
+  /**
+   * @brief 构建可读键盘状态字符串
+   * @param keyboard 16位按键位图
+   * @return 格式化后的按键状态
+   */
+  static std::string buildKeyboardReadableString(uint16_t keyboard)
+  {
+    const auto keyState = [keyboard](KeyboardKey key) -> int {
+      return (keyboard & static_cast<uint16_t>(key)) ? 1 : 0;
+    };
+
+    return
+      "W:" + std::to_string(keyState(KEY_W)) +
+      " S:" + std::to_string(keyState(KEY_S)) +
+      " A:" + std::to_string(keyState(KEY_A)) +
+      " D:" + std::to_string(keyState(KEY_D)) +
+      " Shift:" + std::to_string(keyState(KEY_SHIFT)) +
+      " Ctrl:" + std::to_string(keyState(KEY_CTRL)) +
+      " Q:" + std::to_string(keyState(KEY_Q)) +
+      " E:" + std::to_string(keyState(KEY_E)) +
+      " R:" + std::to_string(keyState(KEY_R)) +
+      " F:" + std::to_string(keyState(KEY_F)) +
+      " G:" + std::to_string(keyState(KEY_G)) +
+      " Z:" + std::to_string(keyState(KEY_Z)) +
+      " X:" + std::to_string(keyState(KEY_X)) +
+      " C:" + std::to_string(keyState(KEY_C)) +
+      " V:" + std::to_string(keyState(KEY_V)) +
+      " B:" + std::to_string(keyState(KEY_B));
+  }
+
   // =========================================================================
   //  成员变量
   // =========================================================================
@@ -458,6 +617,8 @@ private:
 
   /** @brief 波特率 */
   int baud_rate_;
+  /** @brief 鼠标按键切换去抖时间（秒） */
+  double mouse_toggle_debounce_ = 0.2;
 
   /** @brief 串口文件描述符 */
   int serial_fd_;
@@ -486,8 +647,17 @@ private:
   /** @brief 鼠标数据发布者 */
   rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_mouse_;
 
+  /** @brief 鼠标按键切换状态发布者 */
+  rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_mouse_toggles_;
+
   /** @brief 键盘数据发布者 */
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr pub_keyboard_;
+
+  /** @brief 键盘切换状态发布者 */
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr pub_keyboard_toggles_;
+
+  /** @brief 可读键盘状态发布者 */
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_keyboard_readable_;
 
   /** @brief 开关按键发布者 */
   rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_switches_;
@@ -514,6 +684,40 @@ private:
   bool fn_right_toggle_state_ = false;
   /** @brief trigger 切换状态 */
   bool trigger_toggle_state_ = false;
+
+  /** @brief 键盘切换状态是否已完成首次初始化 */
+  bool keyboard_toggle_initialized_ = false;
+  /** @brief 键盘上一次按下状态位图 */
+  uint16_t prev_keyboard_pressed_ = 0;
+  /** @brief 键盘切换状态位图 */
+  uint16_t keyboard_toggle_state_ = 0;
+
+  /** @brief 鼠标按键切换状态是否已完成首次初始化 */
+  bool mouse_toggle_initialized_ = false;
+  /** @brief 鼠标左键上次按下状态 */
+  bool prev_mouse_left_pressed_ = false;
+  /** @brief 鼠标右键上次按下状态 */
+  bool prev_mouse_right_pressed_ = false;
+  /** @brief 鼠标中键上次按下状态 */
+  bool prev_mouse_middle_pressed_ = false;
+  /** @brief 鼠标左键切换状态 */
+  bool mouse_left_toggle_state_ = false;
+  /** @brief 鼠标右键切换状态 */
+  bool mouse_right_toggle_state_ = false;
+  /** @brief 鼠标中键切换状态 */
+  bool mouse_middle_toggle_state_ = false;
+  /** @brief 鼠标左键最近切换时间 */
+  rclcpp::Time last_mouse_left_toggle_time_;
+  /** @brief 鼠标右键最近切换时间 */
+  rclcpp::Time last_mouse_right_toggle_time_;
+  /** @brief 鼠标中键最近切换时间 */
+  rclcpp::Time last_mouse_middle_toggle_time_;
+  /** @brief 鼠标左键最近切换时间是否有效 */
+  bool has_mouse_left_toggle_time_ = false;
+  /** @brief 鼠标右键最近切换时间是否有效 */
+  bool has_mouse_right_toggle_time_ = false;
+  /** @brief 鼠标中键最近切换时间是否有效 */
+  bool has_mouse_middle_toggle_time_ = false;
 };
 
 // ===========================================================================

@@ -17,6 +17,15 @@
 #include <auto_aim_interfaces/msg/armors.hpp>
 
 /**
+ * @brief 云台输入源模式
+ */
+enum class GimbalControlSource {
+  MOUSE = 0,   ///< 仅鼠标
+  REMOTE = 1,  ///< 仅遥控器
+  HYBRID = 2   ///< 混合模式（鼠标优先窗口）
+};
+
+/**
  * @brief 云台控制节点类，负责云台 Pitch/Yaw 轴运动控制
  */
 class GimbalControlNode : public rclcpp::Node {
@@ -44,12 +53,12 @@ public:
     this->declare_parameter<int>("motor2_channel_index", 1);      // 电机2使用的通道索引 (ch1)
 
     // 电机1控制参数
-    this->declare_parameter<double>("motor1_control_speed", 8.0);        // 电机1控制速度 rad/s
-    this->declare_parameter<double>("motor1_control_acceleration", 5.0); // 电机1加速度
+    this->declare_parameter<double>("motor1_control_speed", 10.0);        // 电机1控制速度 rad/s
+    this->declare_parameter<double>("motor1_control_acceleration", 8.0); // 电机1加速度
 
     // 电机2控制参数
-    this->declare_parameter<double>("motor2_control_speed", 2.0);        // 电机2控制速度 rad/s
-    this->declare_parameter<double>("motor2_control_acceleration", 2.0); // 电机2加速度
+    this->declare_parameter<double>("motor2_control_speed", 4.0);        // 电机2控制速度 rad/s
+    this->declare_parameter<double>("motor2_control_acceleration", 4.0); // 电机2加速度
 
     // 通用参数
     this->declare_parameter<int>("master_id", 0xFF);
@@ -57,11 +66,13 @@ public:
     this->declare_parameter<int>("rc_min_value", 364);
     this->declare_parameter<int>("rc_max_value", 1684);
     this->declare_parameter<int>("rc_mid_value", 1024);
-    this->declare_parameter<int>("deadzone", 5); // 遥控器数值死区
+    this->declare_parameter<int>("deadzone", 2); // 遥控器数值死区
 
     // 鼠标控制参数
-    this->declare_parameter<double>("mouse_yaw_sensitivity", 0.003);    // 鼠标X -> Yaw速度 (rad/s)/count
-    this->declare_parameter<double>("mouse_pitch_sensitivity", 0.0008); // 鼠标Y -> Pitch位置增量 rad/count
+    this->declare_parameter<double>("mouse_yaw_sensitivity", 0.02);    // 鼠标X -> Yaw速度 (rad/s)/count
+    this->declare_parameter<double>("mouse_pitch_sensitivity", 0.02); // 鼠标Y -> Pitch速度 (rad/s)/count
+    this->declare_parameter<int>("mouse_max_speed", 1500);              // 鼠标速度限幅 count
+    this->declare_parameter<std::string>("gimbal_control_source", "hybrid");
     this->declare_parameter<double>("input_priority_timeout", 0.3);      // 键鼠优先窗口 s
 
     // 追踪模式参数
@@ -109,7 +120,11 @@ public:
     deadzone_ = this->get_parameter("deadzone").as_int();
     mouse_yaw_sensitivity_ = this->get_parameter("mouse_yaw_sensitivity").as_double();
     mouse_pitch_sensitivity_ = this->get_parameter("mouse_pitch_sensitivity").as_double();
+    mouse_max_speed_ = this->get_parameter("mouse_max_speed").as_int();
+    const std::string gimbal_control_source =
+        this->get_parameter("gimbal_control_source").as_string();
     input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
+    gimbal_control_source_ = parse_gimbal_control_source(gimbal_control_source);
 
     track_yaw_kp_ = this->get_parameter("track_yaw_kp").as_double();
     track_yaw_ki_ = this->get_parameter("track_yaw_ki").as_double();
@@ -147,8 +162,10 @@ public:
                 motor2_can_interface_.c_str(), motor2_id, motor2_min_position_, motor2_max_position_, motor2_channel_index_);
     RCLCPP_INFO(this->get_logger(), "  电机2 CSP参数: 控制速度=%.2f rad/s, 加速度=%.2f", motor2_control_speed_, motor2_control_acceleration_);
     RCLCPP_INFO(this->get_logger(), "  RC范围: %d~%d (中值%d)", rc_min_value_, rc_max_value_, rc_mid_value_);
-    RCLCPP_INFO(this->get_logger(), "  鼠标控制: yaw灵敏度=%.4f, pitch灵敏度=%.4f, 优先窗口=%.2fs",
-                mouse_yaw_sensitivity_, mouse_pitch_sensitivity_, input_priority_timeout_);
+    RCLCPP_INFO(this->get_logger(), "  鼠标控制: yaw灵敏度=%.4f, pitch灵敏度=%.4f, 限幅=%d, 优先窗口=%.2fs",
+                mouse_yaw_sensitivity_, mouse_pitch_sensitivity_, mouse_max_speed_, input_priority_timeout_);
+    RCLCPP_INFO(this->get_logger(), "  云台输入源: %s",
+                gimbal_control_source_to_string(gimbal_control_source_));
     RCLCPP_INFO(this->get_logger(), "  追踪参数: Yaw(Kp=%.2f, Ki=%.2f), Pitch(Kp=%.2f, Ki=%.2f), 退出超时=%.1fs",
                 track_yaw_kp_, track_yaw_ki_, track_pitch_kp_, track_pitch_ki_, track_exit_timeout_);
     RCLCPP_INFO(this->get_logger(), "  Yaw偏移=%.4f rad (%.2f°), 前馈: 增益=%.2f, 滤波=%.2f, 死区=%.2f rad/s",
@@ -226,6 +243,44 @@ public:
   }
 
 private:
+  /**
+   * @brief 解析云台输入源参数
+   * @param source 参数字符串
+   * @return 输入源枚举
+   */
+  GimbalControlSource parse_gimbal_control_source(const std::string &source) const {
+    if (source == "mouse") {
+      return GimbalControlSource::MOUSE;
+    }
+    if (source == "remote") {
+      return GimbalControlSource::REMOTE;
+    }
+    if (source == "hybrid") {
+      return GimbalControlSource::HYBRID;
+    }
+    RCLCPP_WARN(this->get_logger(),
+                "未知 gimbal_control_source='%s'，回退为 hybrid",
+                source.c_str());
+    return GimbalControlSource::HYBRID;
+  }
+
+  /**
+   * @brief 云台输入源转字符串
+   * @param source 输入源枚举
+   * @return 输入源字符串
+   */
+  const char *gimbal_control_source_to_string(GimbalControlSource source) const {
+    switch (source) {
+      case GimbalControlSource::MOUSE:
+        return "mouse";
+      case GimbalControlSource::REMOTE:
+        return "remote";
+      case GimbalControlSource::HYBRID:
+      default:
+        return "hybrid";
+    }
+  }
+
   /**
    * @brief 初始化电机（异步方式，带超时）
    * @param motor 电机对象指针
@@ -341,11 +396,17 @@ private:
       const bool mouse_valid =
           mouse_time_valid_ &&
           ((now - last_mouse_time_).seconds() <= input_priority_timeout_);
+      const bool use_mouse_yaw =
+          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
+          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid && mouse_x_ != 0);
+      const bool use_mouse_pitch =
+          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
+          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
 
       // 电机1：只更新目标速度，实际控制由高频定时器执行
       if (motor1_initialized_) {
-        if (mouse_valid && mouse_x_ != 0) {
-          double mouse_vel = -static_cast<double>(mouse_x_) * mouse_yaw_sensitivity_;
+        if (use_mouse_yaw) {
+          double mouse_vel = static_cast<double>(mouse_x_) * mouse_yaw_sensitivity_;
           mouse_vel = std::max(-motor1_max_velocity_, std::min(motor1_max_velocity_, mouse_vel));
           motor1_current_velocity_ = mouse_vel;
         } else {
@@ -356,24 +417,11 @@ private:
 
       // 控制电机2
       if (motor2_initialized_ && motor2_) {
-        if (mouse_valid && mouse_y_ != 0) {
+        if (use_mouse_pitch) {
           if (!motor2_mouse_target_valid_) {
             motor2_mouse_target_position_ = motor2_->position_;
             motor2_mouse_target_valid_ = true;
           }
-          motor2_mouse_target_position_ +=
-              -static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
-          motor2_mouse_target_position_ = std::max(
-              motor2_min_position_,
-              std::min(motor2_max_position_, motor2_mouse_target_position_));
-
-          motor2_->RobStrite_Motor_PosCSP_control(
-              motor2_control_speed_,
-              motor2_mouse_target_position_);
-
-          auto target_msg2 = std_msgs::msg::Float32();
-          target_msg2.data = static_cast<float>(motor2_mouse_target_position_);
-          motor2_target_position_publisher_->publish(target_msg2);
         } else {
           control_motor(motor2_,
                         msg->data[motor2_channel_index_],
@@ -397,13 +445,21 @@ private:
    * @param msg /vt_remote/mouse 消息 [mouse_x, mouse_y, mouse_z, left, right, middle]
    */
   void mouse_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
+    if (gimbal_control_source_ == GimbalControlSource::REMOTE) {
+      return;
+    }
+
     if (msg->data.size() < 2) {
       return;
     }
-    mouse_x_ = msg->data[0];
-    mouse_y_ = msg->data[1];
-    last_mouse_time_ = this->now();
-    mouse_time_valid_ = true;
+    int clamped_x = std::max(-mouse_max_speed_, std::min(mouse_max_speed_, static_cast<int>(msg->data[0])));
+    int clamped_y = std::max(-mouse_max_speed_, std::min(mouse_max_speed_, static_cast<int>(msg->data[1])));
+    mouse_x_ = static_cast<int16_t>(clamped_x);
+    mouse_y_ = static_cast<int16_t>(clamped_y);
+    if ((clamped_x != 0) || (clamped_y != 0)) {
+      last_mouse_time_ = this->now();
+      mouse_time_valid_ = true;
+    }
   }
 
   /**
@@ -646,6 +702,39 @@ private:
       // 普通模式：使用当前速度做积分
       double velocity = motor1_current_velocity_;
       motor1_target_position_ += velocity * dt;
+
+      // 鼠标控制电机2：将鼠标Y轴速度积分为目标位置（与电机1一致）
+      const auto now_ros = this->now();
+      const bool mouse_valid =
+          mouse_time_valid_ &&
+          ((now_ros - last_mouse_time_).seconds() <= input_priority_timeout_);
+      const bool use_mouse_pitch =
+          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
+          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
+      if (motor2_initialized_ && motor2_ && use_mouse_pitch) {
+        if (!motor2_mouse_target_valid_) {
+          motor2_mouse_target_position_ = motor2_->position_;
+          motor2_mouse_target_valid_ = true;
+        }
+
+        double mouse_pitch_velocity =
+            static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
+        mouse_pitch_velocity = std::max(-motor2_control_speed_,
+                                        std::min(motor2_control_speed_, mouse_pitch_velocity));
+
+        motor2_mouse_target_position_ += mouse_pitch_velocity * dt;
+        motor2_mouse_target_position_ = std::max(
+            motor2_min_position_,
+            std::min(motor2_max_position_, motor2_mouse_target_position_));
+
+        motor2_->RobStrite_Motor_PosCSP_control(
+            motor2_control_speed_,
+            motor2_mouse_target_position_);
+
+        auto target_msg2 = std_msgs::msg::Float32();
+        target_msg2.data = static_cast<float>(motor2_mouse_target_position_);
+        motor2_target_position_publisher_->publish(target_msg2);
+      }
     }
     // 追踪模式下，motor1_target_position_ 由 armors_callback 更新
 
@@ -810,6 +899,8 @@ private:
   int deadzone_;
   double mouse_yaw_sensitivity_;
   double mouse_pitch_sensitivity_;
+  int mouse_max_speed_;
+  GimbalControlSource gimbal_control_source_{GimbalControlSource::HYBRID};
   double input_priority_timeout_;
 
   // 鼠标输入状态

@@ -59,6 +59,16 @@ enum KeyToggleIndex
   TG_COUNT    = 4   ///< 数据总数
 };
 
+/**
+ * @brief 发射控制输入源
+ */
+enum class FireControlSource
+{
+  MOUSE = 0,   ///< 仅鼠标
+  REMOTE = 1,  ///< 仅遥控器按键
+  HYBRID = 2   ///< 混合模式（鼠标优先窗口）
+};
+
 /** @brief CAN 协议常量 */
 static constexpr uint32_t CAN_SPEED_CMD_ID  = 0x100;  ///< PC -> MCU: 速度指令
 static constexpr uint32_t CAN_FEEDBACK_ID   = 0x101;  ///< MCU -> PC: 电机反馈
@@ -90,13 +100,17 @@ public:
     this->declare_parameter<int>("low_speed_rpm", 500);
     this->declare_parameter<int>("high_speed_rpm", 4500);
     this->declare_parameter<int>("send_interval_ms", 50);
+    this->declare_parameter<std::string>("fire_control_source", "hybrid");
     this->declare_parameter<double>("input_priority_timeout", 0.3);
 
     can_interface_    = this->get_parameter("can_interface").as_string();
     low_speed_rpm_    = this->get_parameter("low_speed_rpm").as_int();
     high_speed_rpm_   = this->get_parameter("high_speed_rpm").as_int();
     int send_interval = this->get_parameter("send_interval_ms").as_int();
+    const std::string fire_control_source =
+      this->get_parameter("fire_control_source").as_string();
     input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
+    fire_control_source_ = parseFireControlSource(fire_control_source);
 
     /* 默认低速 */
     current_speed_rpm_ = low_speed_rpm_;
@@ -134,6 +148,9 @@ public:
                 "AmmoBoosterNode 已启动 | CAN: %s | 低速: %d RPM | 高速: %d RPM | 发送周期: %d ms",
                 can_interface_.c_str(), low_speed_rpm_, high_speed_rpm_, send_interval);
     RCLCPP_INFO(this->get_logger(), "当前模式: 低速 (%d RPM)", low_speed_rpm_);
+    RCLCPP_INFO(this->get_logger(),
+                "发射控制输入源: %s",
+                fireControlSourceToString(fire_control_source_));
   }
 
   /**
@@ -151,6 +168,46 @@ private:
   // =========================================================================
   //  CAN 接口操作
   // =========================================================================
+
+  /**
+   * @brief 解析发射控制输入源参数
+   * @param source 参数字符串
+   * @return 输入源枚举
+   */
+  FireControlSource parseFireControlSource(const std::string & source) const
+  {
+    if (source == "mouse") {
+      return FireControlSource::MOUSE;
+    }
+    if (source == "remote") {
+      return FireControlSource::REMOTE;
+    }
+    if (source == "hybrid") {
+      return FireControlSource::HYBRID;
+    }
+    RCLCPP_WARN(this->get_logger(),
+                "未知 fire_control_source='%s'，回退为 hybrid",
+                source.c_str());
+    return FireControlSource::HYBRID;
+  }
+
+  /**
+   * @brief 输入源枚举转字符串
+   * @param source 输入源枚举
+   * @return 输入源字符串
+   */
+  const char * fireControlSourceToString(FireControlSource source) const
+  {
+    switch (source) {
+      case FireControlSource::MOUSE:
+        return "mouse";
+      case FireControlSource::REMOTE:
+        return "remote";
+      case FireControlSource::HYBRID:
+      default:
+        return "hybrid";
+    }
+  }
 
   /**
    * @brief 初始化 SocketCAN 接口
@@ -247,6 +304,10 @@ private:
    */
   void mouseCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
+    if (fire_control_source_ == FireControlSource::REMOTE) {
+      return;
+    }
+
     if (static_cast<int>(msg->data.size()) < MOUSE_COUNT) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
                            "mouse 数据长度不足: %zu (期望 %d)",
@@ -255,10 +316,14 @@ private:
     }
 
     const bool left_pressed = (msg->data[MOUSE_LEFT] != 0);
-    last_mouse_left_toggle_time_ = this->now();
-    mouse_left_toggle_time_valid_ = true;
+    const bool state_changed =
+      !mouse_left_state_initialized_ || (left_pressed != prev_mouse_left_pressed_);
+    if (state_changed) {
+      last_mouse_left_toggle_time_ = this->now();
+      mouse_left_toggle_time_valid_ = true;
+    }
 
-    if (left_pressed != prev_mouse_left_pressed_) {
+    if (state_changed) {
       is_high_speed_ = left_pressed;
       current_speed_rpm_ = is_high_speed_ ? high_speed_rpm_ : low_speed_rpm_;
       RCLCPP_INFO(this->get_logger(),
@@ -266,6 +331,7 @@ private:
                   is_high_speed_ ? "高速" : "低速",
                   current_speed_rpm_);
     }
+    mouse_left_state_initialized_ = true;
     prev_mouse_left_pressed_ = left_pressed;
   }
 
@@ -275,11 +341,16 @@ private:
    */
   void keyTogglesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
+    if (fire_control_source_ == FireControlSource::MOUSE) {
+      return;
+    }
+
     if (static_cast<int>(msg->data.size()) < TG_COUNT) {
       return;
     }
 
     const bool mouse_priority_active =
+      (fire_control_source_ == FireControlSource::HYBRID) &&
       mouse_left_toggle_time_valid_ &&
       (this->now() - last_mouse_left_toggle_time_).seconds() < input_priority_timeout_;
     if (mouse_priority_active) {
@@ -396,6 +467,8 @@ private:
 
   /** @brief 当前是否为高速模式 */
   bool is_high_speed_;
+  /** @brief 发射控制输入源 */
+  FireControlSource fire_control_source_{FireControlSource::HYBRID};
   /** @brief 键鼠优先窗口时长（秒） */
   double input_priority_timeout_{};
   /** @brief 鼠标左键最近切换时间 */
@@ -404,6 +477,8 @@ private:
   bool mouse_left_toggle_time_valid_ = false;
   /** @brief 鼠标左键上一次按下状态 */
   bool prev_mouse_left_pressed_ = false;
+  /** @brief 鼠标左键状态是否已初始化 */
+  bool mouse_left_state_initialized_ = false;
   /** @brief fn_right 切换状态是否已初始化 */
   bool fn_right_toggle_initialized_ = false;
   /** @brief fn_right 上一次切换状态 */

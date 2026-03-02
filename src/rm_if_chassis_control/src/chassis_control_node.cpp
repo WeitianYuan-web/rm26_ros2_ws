@@ -104,7 +104,19 @@ enum KeyboardBit : uint16_t
   KB_W = (1u << 0),
   KB_S = (1u << 1),
   KB_A = (1u << 2),
-  KB_D = (1u << 3)
+  KB_D = (1u << 3),
+  KB_Q = (1u << 6),
+  KB_E = (1u << 7)
+};
+
+/**
+ * @brief 发射/供弹控制输入源
+ */
+enum class FireControlSource
+{
+  MOUSE = 0,   ///< 仅鼠标
+  REMOTE = 1,  ///< 仅遥控器按键
+  HYBRID = 2   ///< 混合模式（鼠标优先窗口）
 };
 
 /**
@@ -132,6 +144,7 @@ public:
     this->declare_parameter<double>("max_angular_accel", 6.0);
     this->declare_parameter<double>("max_linear_vel", 3.0);
     this->declare_parameter<double>("max_angular_vel", 6.0);
+    this->declare_parameter<std::string>("fire_control_source", "hybrid");
     this->declare_parameter<double>("input_priority_timeout", 0.3);
     this->declare_parameter<int>("deadzone", 20);
 
@@ -141,15 +154,18 @@ public:
     max_angular_accel_ = this->get_parameter("max_angular_accel").as_double();
     max_linear_vel_    = this->get_parameter("max_linear_vel").as_double();
     max_angular_vel_   = this->get_parameter("max_angular_vel").as_double();
+    const std::string fire_control_source =
+      this->get_parameter("fire_control_source").as_string();
     input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
     deadzone_          = this->get_parameter("deadzone").as_int();
+    fire_control_source_ = parseFireControlSource(fire_control_source);
 
     /* -------- 订阅遥控器通道 -------- */
     sub_channels_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/channels", 10,
       std::bind(&ChassisControlNode::channelsCallback, this, std::placeholders::_1));
 
-    /* -------- 订阅键盘按键（WASD 底盘控制）-------- */
+    /* -------- 订阅键盘按键（WASD 平移 + QE 旋转）-------- */
     sub_keyboard_ = this->create_subscription<std_msgs::msg::UInt16>(
       "/vt_remote/keyboard", 10,
       std::bind(&ChassisControlNode::keyboardCallback, this, std::placeholders::_1));
@@ -194,6 +210,9 @@ public:
     RCLCPP_INFO(this->get_logger(),
                 "限制参数: 线加速度=%.2f 角加速度=%.2f | 线速度=%.2f 角速度=%.2f | 死区: %d",
                 max_linear_accel_, max_angular_accel_, max_linear_vel_, max_angular_vel_, deadzone_);
+    RCLCPP_INFO(this->get_logger(),
+                "发射/供弹控制输入源: %s",
+                fireControlSourceToString(fire_control_source_));
   }
 
   /**
@@ -209,6 +228,46 @@ private:
   // =========================================================================
   //  回调函数
   // =========================================================================
+
+  /**
+   * @brief 解析发射/供弹控制输入源参数
+   * @param source 参数字符串
+   * @return 输入源枚举
+   */
+  FireControlSource parseFireControlSource(const std::string & source) const
+  {
+    if (source == "mouse") {
+      return FireControlSource::MOUSE;
+    }
+    if (source == "remote") {
+      return FireControlSource::REMOTE;
+    }
+    if (source == "hybrid") {
+      return FireControlSource::HYBRID;
+    }
+    RCLCPP_WARN(this->get_logger(),
+                "未知 fire_control_source='%s'，回退为 hybrid",
+                source.c_str());
+    return FireControlSource::HYBRID;
+  }
+
+  /**
+   * @brief 输入源枚举转字符串
+   * @param source 输入源枚举
+   * @return 输入源字符串
+   */
+  const char * fireControlSourceToString(FireControlSource source) const
+  {
+    switch (source) {
+      case FireControlSource::MOUSE:
+        return "mouse";
+      case FireControlSource::REMOTE:
+        return "remote";
+      case FireControlSource::HYBRID:
+      default:
+        return "hybrid";
+    }
+  }
 
   /**
    * @brief 遥控器通道数据回调（轻量，仅更新缓存速度值）
@@ -245,7 +304,7 @@ private:
   }
 
   /**
-   * @brief 键盘数据回调（WASD 控制底盘）
+   * @brief 键盘数据回调（WASD 控制平移，QE 控制旋转）
    * @param msg keyboard 位图
    */
   void keyboardCallback(const std_msgs::msg::UInt16::SharedPtr msg)
@@ -255,10 +314,13 @@ private:
     const int s = (kb & KB_S) ? 1 : 0;
     const int a = (kb & KB_A) ? 1 : 0;
     const int d = (kb & KB_D) ? 1 : 0;
+    const int q = (kb & KB_Q) ? 1 : 0;
+    const int e = (kb & KB_E) ? 1 : 0;
 
     float vx = static_cast<float>(w - s);
     float vy = static_cast<float>(a - d);
-    const bool active = (vx != 0.0f) || (vy != 0.0f);
+    const float vw = static_cast<float>(q - e);
+    const bool active = (vx != 0.0f) || (vy != 0.0f) || (vw != 0.0f);
 
     if (active && (vx != 0.0f) && (vy != 0.0f)) {
       const float inv_sqrt2 = 0.70710678f;
@@ -272,7 +334,7 @@ private:
       if (active) {
         target_vx_ = vx * static_cast<float>(max_linear_vel_);
         target_vy_ = vy * static_cast<float>(max_linear_vel_);
-        target_vw_ = 0.0f;
+        target_vw_ = vw * static_cast<float>(max_angular_vel_);
       }
     }
 
@@ -286,6 +348,10 @@ private:
    */
   void mouseCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
+    if (fire_control_source_ == FireControlSource::REMOTE) {
+      return;
+    }
+
     if (msg->data.size() < 6) {
       return;
     }
@@ -293,8 +359,17 @@ private:
     const bool left_pressed = (msg->data[3] != 0);
     const bool right_pressed = (msg->data[4] != 0);
     const auto now = this->now();
-    last_mouse_right_toggle_time_ = now;
-    mouse_right_toggle_time_valid_ = true;
+    const bool state_changed =
+      !mouse_button_state_initialized_ ||
+      (left_pressed != prev_mouse_left_pressed_) ||
+      (right_pressed != prev_mouse_right_pressed_);
+    if (state_changed) {
+      last_mouse_right_toggle_time_ = now;
+      mouse_right_toggle_time_valid_ = true;
+    }
+    mouse_button_state_initialized_ = true;
+    prev_mouse_left_pressed_ = left_pressed;
+    prev_mouse_right_pressed_ = right_pressed;
 
     if (!left_pressed) {
       is_booster_high_speed_ = false;
@@ -337,6 +412,10 @@ private:
    */
   void keyTogglesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
+    if (fire_control_source_ == FireControlSource::MOUSE) {
+      return;
+    }
+
     if (msg->data.size() < 4) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
                            "key_toggles 数据不完整: 期望 4 个值，收到 %zu", msg->data.size());
@@ -347,6 +426,7 @@ private:
     const bool fn_right_toggle = (msg->data[2] != 0);  /* index 2: fn_right */
 
     const bool mouse_override_active =
+      (fire_control_source_ == FireControlSource::HYBRID) &&
       mouse_right_toggle_time_valid_ &&
       (this->now() - last_mouse_right_toggle_time_).seconds() < input_priority_timeout_;
 
@@ -751,6 +831,8 @@ private:
   double max_angular_vel_{};
   /** @brief 摇杆死区（原始值单位） */
   int deadzone_{};
+  /** @brief 发射/供弹控制输入源 */
+  FireControlSource fire_control_source_{FireControlSource::HYBRID};
   /** @brief 键鼠优先窗口时长（秒） */
   double input_priority_timeout_{};
 
@@ -800,6 +882,12 @@ private:
   rclcpp::Time last_mouse_right_toggle_time_;
   /** @brief 鼠标右键切换时间是否有效 */
   bool mouse_right_toggle_time_valid_ = false;
+  /** @brief 鼠标按键状态是否已初始化 */
+  bool mouse_button_state_initialized_ = false;
+  /** @brief 鼠标左键上次状态 */
+  bool prev_mouse_left_pressed_ = false;
+  /** @brief 鼠标右键上次状态 */
+  bool prev_mouse_right_pressed_ = false;
   /** @brief WASD 键盘控制是否生效 */
   bool keyboard_wasd_active_ = false;
 

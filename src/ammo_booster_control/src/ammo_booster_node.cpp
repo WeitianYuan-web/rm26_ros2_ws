@@ -16,9 +16,11 @@
  *   - low_speed_rpm  (int)   : 低速模式 RPM，默认 500
  *   - high_speed_rpm (int)   : 高速模式 RPM，默认 4500
  *   - send_interval_ms (int) : 速度指令发送周期 (ms)，默认 50
+ *   - recv_interval_ms (int) : CAN 反馈读取周期 (ms)，默认 2
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
 
 #include <linux/can.h>
@@ -72,6 +74,7 @@ enum class FireControlSource
 /** @brief CAN 协议常量 */
 static constexpr uint32_t CAN_SPEED_CMD_ID  = 0x100;  ///< PC -> MCU: 速度指令
 static constexpr uint32_t CAN_FEEDBACK_ID   = 0x101;  ///< MCU -> PC: 电机反馈
+static constexpr uint32_t CAN_GYRO_Z_ID     = 0x102;  ///< MCU -> PC: 陀螺仪 Z 轴角速度
 static constexpr size_t FEEDBACK_DATA_COUNT = 4;
 
 /**
@@ -100,6 +103,7 @@ public:
     this->declare_parameter<int>("low_speed_rpm", 500);
     this->declare_parameter<int>("high_speed_rpm", 4500);
     this->declare_parameter<int>("send_interval_ms", 50);
+    this->declare_parameter<int>("recv_interval_ms", 2);
     this->declare_parameter<std::string>("fire_control_source", "hybrid");
     this->declare_parameter<double>("input_priority_timeout", 0.3);
 
@@ -107,6 +111,7 @@ public:
     low_speed_rpm_    = this->get_parameter("low_speed_rpm").as_int();
     high_speed_rpm_   = this->get_parameter("high_speed_rpm").as_int();
     int send_interval = this->get_parameter("send_interval_ms").as_int();
+    int recv_interval = this->get_parameter("recv_interval_ms").as_int();
     const std::string fire_control_source =
       this->get_parameter("fire_control_source").as_string();
     input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
@@ -132,12 +137,17 @@ public:
 
     pub_feedback_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
       "/ammo_booster/feedback", 10);
+    pub_gyro_z_ = this->create_publisher<std_msgs::msg::Float64>(
+      "/gimbal/gyro_z", rclcpp::QoS(rclcpp::KeepLast(200)));
     feedback_msg_.data.resize(FEEDBACK_DATA_COUNT, 0);
 
     /* 创建速度指令发送定时器 */
     send_timer_ = this->create_wall_timer(
       std::chrono::milliseconds(send_interval),
       std::bind(&AmmoBoosterNode::sendTimerCallback, this));
+    recv_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(recv_interval),
+      std::bind(&AmmoBoosterNode::recvTimerCallback, this));
 
     /* 创建 CAN 重连定时器 (1 秒检查一次) */
     reconnect_timer_ = this->create_wall_timer(
@@ -145,8 +155,8 @@ public:
       std::bind(&AmmoBoosterNode::reconnectTimerCallback, this));
 
     RCLCPP_INFO(this->get_logger(),
-                "AmmoBoosterNode 已启动 | CAN: %s | 低速: %d RPM | 高速: %d RPM | 发送周期: %d ms",
-                can_interface_.c_str(), low_speed_rpm_, high_speed_rpm_, send_interval);
+                "AmmoBoosterNode 已启动 | CAN: %s | 低速: %d RPM | 高速: %d RPM | 发送周期: %d ms | 接收周期: %d ms",
+                can_interface_.c_str(), low_speed_rpm_, high_speed_rpm_, send_interval, recv_interval);
     RCLCPP_INFO(this->get_logger(), "当前模式: 低速 (%d RPM)", low_speed_rpm_);
     RCLCPP_INFO(this->get_logger(),
                 "发射控制输入源: %s",
@@ -241,10 +251,12 @@ private:
       return false;
     }
 
-    /* 设置接收过滤：只接收反馈帧 ID=0x101 */
-    struct can_filter rfilter[1];
+    /* 设置接收过滤：接收电机反馈与陀螺仪反馈帧 */
+    struct can_filter rfilter[2];
     rfilter[0].can_id   = CAN_FEEDBACK_ID;
     rfilter[0].can_mask = CAN_SFF_MASK;
+    rfilter[1].can_id   = CAN_GYRO_Z_ID;
+    rfilter[1].can_mask = CAN_SFF_MASK;
     setsockopt(can_fd_, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter));
 
     RCLCPP_INFO(this->get_logger(), "CAN 接口 %s 已初始化", can_interface_.c_str());
@@ -388,6 +400,16 @@ private:
       return;
     }
     sendSpeedCommand(current_speed_rpm_);
+  }
+
+  /**
+   * @brief CAN 接收与反馈发布定时器回调
+   */
+  void recvTimerCallback()
+  {
+    if (can_fd_ < 0) {
+      return;
+    }
     readAndPublishFeedback();
   }
 
@@ -414,24 +436,35 @@ private:
       if (static_cast<size_t>(nbytes) != sizeof(frame)) {
         continue;
       }
-      if ((frame.can_id & CAN_SFF_MASK) != CAN_FEEDBACK_ID || frame.can_dlc < 8) {
-        continue;
+      const uint32_t can_id = (frame.can_id & CAN_SFF_MASK);
+      if (can_id == CAN_FEEDBACK_ID) {
+        if (frame.can_dlc < 8) {
+          continue;
+        }
+        const int16_t motor0_speed =
+          static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | frame.data[1]);
+        const int16_t motor0_current =
+          static_cast<int16_t>((static_cast<uint16_t>(frame.data[2]) << 8) | frame.data[3]);
+        const int16_t motor1_speed =
+          static_cast<int16_t>((static_cast<uint16_t>(frame.data[4]) << 8) | frame.data[5]);
+        const int16_t motor1_current =
+          static_cast<int16_t>((static_cast<uint16_t>(frame.data[6]) << 8) | frame.data[7]);
+
+        feedback_msg_.data[0] = motor0_speed;
+        feedback_msg_.data[1] = motor0_current;
+        feedback_msg_.data[2] = motor1_speed;
+        feedback_msg_.data[3] = motor1_current;
+        pub_feedback_->publish(feedback_msg_);
+      } else if (can_id == CAN_GYRO_Z_ID) {
+        if (frame.can_dlc < 2) {
+          continue;
+        }
+        const int16_t raw =
+          static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | frame.data[1]);
+        std_msgs::msg::Float64 gyro_msg;
+        gyro_msg.data = static_cast<double>(raw) / 100.0;
+        pub_gyro_z_->publish(gyro_msg);
       }
-
-      const int16_t motor0_speed =
-        static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | frame.data[1]);
-      const int16_t motor0_current =
-        static_cast<int16_t>((static_cast<uint16_t>(frame.data[2]) << 8) | frame.data[3]);
-      const int16_t motor1_speed =
-        static_cast<int16_t>((static_cast<uint16_t>(frame.data[4]) << 8) | frame.data[5]);
-      const int16_t motor1_current =
-        static_cast<int16_t>((static_cast<uint16_t>(frame.data[6]) << 8) | frame.data[7]);
-
-      feedback_msg_.data[0] = motor0_speed;
-      feedback_msg_.data[1] = motor0_current;
-      feedback_msg_.data[2] = motor1_speed;
-      feedback_msg_.data[3] = motor1_current;
-      pub_feedback_->publish(feedback_msg_);
     }
   }
 
@@ -493,9 +526,13 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
   /** @brief 电机反馈发布者 */
   rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_feedback_;
+  /** @brief 云台陀螺仪 Z 轴角速度发布者 (rad/s) */
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_gyro_z_;
 
   /** @brief 速度指令发送定时器 */
   rclcpp::TimerBase::SharedPtr send_timer_;
+  /** @brief CAN 反馈接收定时器 */
+  rclcpp::TimerBase::SharedPtr recv_timer_;
 
   /** @brief CAN 重连定时器 */
   rclcpp::TimerBase::SharedPtr reconnect_timer_;

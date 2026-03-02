@@ -20,7 +20,7 @@
  *              + vx(f32) + vy(f32) + vw(f32) + feed_rpm(f32) = 33B
  *   - 反馈帧 MCU→PC: [0x55] + x(f32) + y(f32) + θ(f32) + vx(f32) + vy(f32)
  *                      + vw(f32) + wheel1_v(f32) + wheel2_v(f32)
- *                      + wheel3_v(f32) + wheel4_v(f32) + feed_rpm(f32) + [0xAA] = 46B
+ *                      + wheel3_v(f32) + wheel4_v(f32) + feed_rpm(f32) + gyro_z(f32) + [0xAA] = 50B
  *
  * 供弹速度控制逻辑：
  *   - 订阅 /vt_remote/key_toggles，使用 fn_right 切换状态跟踪 booster 高/低速模式
@@ -34,7 +34,7 @@
  *
  * 发布话题：
  *   - /chassis/feedback    (std_msgs/Float32MultiArray):
- *     [x, y, θ, vx, vy, vw, wheel1_v, wheel2_v, wheel3_v, wheel4_v, feed_rpm]
+ *     [x, y, θ, vx, vy, vw, wheel1_v, wheel2_v, wheel3_v, wheel4_v, feed_rpm, gyro_z]
  *
  * 参数：
  *   - serial_port  (string) : 串口设备路径，默认 "/dev/chassis_usb"
@@ -61,6 +61,7 @@
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
 #include <std_msgs/msg/u_int16.hpp>
@@ -78,10 +79,10 @@ static constexpr size_t CTRL_FRAME_SIZE = 33;
 static constexpr uint8_t FB_FRAME_HEADER = 0x55;
 /** @brief 反馈帧帧尾 */
 static constexpr uint8_t FB_FRAME_TAIL = 0xAA;
-/** @brief 反馈帧长度 (1B 帧头 + 11×float32 + 1B 帧尾) */
-static constexpr size_t FB_FRAME_SIZE = 46;
+/** @brief 反馈帧长度 (1B 帧头 + 12×float32 + 1B 帧尾) */
+static constexpr size_t FB_FRAME_SIZE = 50;
 /** @brief 反馈帧 float 数量 */
-static constexpr size_t FB_FLOAT_COUNT = 11;
+static constexpr size_t FB_FLOAT_COUNT = 12;
 
 /* ========================================================================= */
 /*  摇杆通道常量                                                              */
@@ -183,6 +184,8 @@ public:
     /* -------- 反馈发布者 -------- */
     pub_feedback_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
       "/chassis/feedback", 10);
+    pub_gyro_z_ = this->create_publisher<std_msgs::msg::Float32>(
+      "/chassis/gyro_z", 10);
 
     /* -------- 打开串口 -------- */
     if (!openSerial()) {
@@ -628,7 +631,7 @@ private:
 
       /* 校验帧尾 */
       if (rx_buffer_[FB_FRAME_SIZE - 1] == FB_FRAME_TAIL) {
-        /* 解析 11 个 float32: x, y, theta, vx, vy, vw, wheel1_v, wheel2_v, wheel3_v, wheel4_v, feed_rpm */
+        /* 解析 12 个 float32: x, y, theta, vx, vy, vw, wheel1_v, wheel2_v, wheel3_v, wheel4_v, feed_rpm, gyro_z */
         float values[FB_FLOAT_COUNT];
         std::memcpy(values, &rx_buffer_[1], FB_FLOAT_COUNT * sizeof(float));
 
@@ -636,6 +639,8 @@ private:
           feedback_msg_.data[i] = values[i];
         }
         pub_feedback_->publish(feedback_msg_);
+        gyro_z_msg_.data = values[11];
+        pub_gyro_z_->publish(gyro_z_msg_);
 
         last_feedback_time_ = this->now();
         if (feedback_timeout_) {
@@ -644,10 +649,10 @@ private:
         }
 
         RCLCPP_DEBUG(this->get_logger(),
-                     "反馈: Pos(%.3f, %.3f, %.3f) Vel(%.3f, %.3f, %.3f) W(%.3f, %.3f, %.3f, %.3f) Feed(%.0f)",
+                     "反馈: Pos(%.3f, %.3f, %.3f) Vel(%.3f, %.3f, %.3f) W(%.3f, %.3f, %.3f, %.3f) Feed(%.0f) GyroZ(%.3f)",
                      values[0], values[1], values[2],
                      values[3], values[4], values[5],
-                     values[6], values[7], values[8], values[9], values[10]);
+                     values[6], values[7], values[8], values[9], values[10], values[11]);
       }
 
       /* 移除已处理/无效的帧 */
@@ -906,6 +911,8 @@ private:
   uint8_t ctrl_frame_[CTRL_FRAME_SIZE]{};
   /** @brief 预分配的反馈消息 */
   std_msgs::msg::Float32MultiArray feedback_msg_;
+  /** @brief 预分配的 gyro_z 消息 */
+  std_msgs::msg::Float32 gyro_z_msg_;
 
   /* ---- ROS 对象 ---- */
 
@@ -921,6 +928,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
   /** @brief 反馈数据发布者 */
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_feedback_;
+  /** @brief gyro_z 发布者 */
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_gyro_z_;
 };
 
 /* ========================================================================= */

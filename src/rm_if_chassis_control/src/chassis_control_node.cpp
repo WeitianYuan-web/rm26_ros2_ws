@@ -142,11 +142,11 @@ public:
     this->declare_parameter<int>("baud_rate", 921600);
     this->declare_parameter<double>("max_linear_accel", 2.0);
     this->declare_parameter<double>("max_angular_accel", 6.0);
-    this->declare_parameter<double>("max_linear_vel", 3.0);
-    this->declare_parameter<double>("max_angular_vel", 6.0);
+    this->declare_parameter<double>("max_linear_vel", 2.0);
+    this->declare_parameter<double>("max_angular_vel", 4.0);
     this->declare_parameter<std::string>("fire_control_source", "hybrid");
     this->declare_parameter<double>("input_priority_timeout", 0.3);
-    this->declare_parameter<int>("deadzone", 20);
+    this->declare_parameter<int>("deadzone", 2);
 
     serial_port_ = this->get_parameter("serial_port").as_string();
     baud_rate_   = this->get_parameter("baud_rate").as_int();
@@ -319,7 +319,7 @@ private:
 
     float vx = static_cast<float>(w - s);
     float vy = static_cast<float>(a - d);
-    const float vw = static_cast<float>(q - e);
+    const float vw = static_cast<float>(e - q);
     const bool active = (vx != 0.0f) || (vy != 0.0f) || (vw != 0.0f);
 
     if (active && (vx != 0.0f) && (vy != 0.0f)) {

@@ -36,6 +36,7 @@
 #include <sys/select.h>
 
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -70,10 +71,18 @@ public:
     this->declare_parameter<std::string>("serial_port", "/dev/ttyUSB1");
     this->declare_parameter<int>("baud_rate", 921600);
     this->declare_parameter<double>("mouse_toggle_debounce", 0.2);
+    this->declare_parameter<double>("startup_neutral_hold_seconds", 1.0);
+    this->declare_parameter<int>("startup_neutral_tolerance", 30);
+    this->declare_parameter<double>("startup_neutral_warn_interval", 1.0);
 
     serial_port_ = this->get_parameter("serial_port").as_string();
     baud_rate_ = this->get_parameter("baud_rate").as_int();
     mouse_toggle_debounce_ = this->get_parameter("mouse_toggle_debounce").as_double();
+    startup_neutral_hold_seconds_ =
+      this->get_parameter("startup_neutral_hold_seconds").as_double();
+    startup_neutral_tolerance_ = this->get_parameter("startup_neutral_tolerance").as_int();
+    startup_neutral_warn_interval_ =
+      this->get_parameter("startup_neutral_warn_interval").as_double();
 
     /* 创建发布者 */
     pub_channels_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
@@ -312,7 +321,9 @@ private:
       /* 尝试解析 */
       RemoteData data{};
       if (parseFrame(rx_buffer_.data(), data)) {
-        publishData(data);
+        if (checkStartupNeutralGate(data)) {
+          publishData(data);
+        }
         frame_error_count_ = 0;
         last_frame_time_ = this->now();
         if (is_timeout_) {
@@ -354,6 +365,84 @@ private:
       }
     }
     return std::string::npos;
+  }
+
+  /**
+   * @brief 判断单个通道值是否在中点容差范围内
+   * @param channel_value 通道当前值
+   * @param tolerance 中点容差（绝对值）
+   * @return true 在范围内，false 不在范围内
+   */
+  static bool isWithinNeutralRange(uint16_t channel_value, int tolerance)
+  {
+    const int diff = static_cast<int>(channel_value) - static_cast<int>(CHANNEL_MID);
+    return std::abs(diff) <= tolerance;
+  }
+
+  /**
+   * @brief 判断当前数据帧的摇杆与拨轮是否处于中点附近
+   * @param data 已解析的遥控器数据
+   * @return true 全部回中，false 存在偏移
+   */
+  bool isChannelsNeutral(const RemoteData &data) const
+  {
+    return
+      isWithinNeutralRange(data.ch0, startup_neutral_tolerance_) &&
+      isWithinNeutralRange(data.ch1, startup_neutral_tolerance_) &&
+      isWithinNeutralRange(data.ch2, startup_neutral_tolerance_) &&
+      isWithinNeutralRange(data.ch3, startup_neutral_tolerance_) &&
+      isWithinNeutralRange(data.wheel, startup_neutral_tolerance_);
+  }
+
+  /**
+   * @brief 启动阶段回中校验门控
+   * @param data 已解析的遥控器数据
+   * @return true 允许发布话题，false 暂不允许发布
+   */
+  bool checkStartupNeutralGate(const RemoteData &data)
+  {
+    if (startup_neutral_verified_) {
+      return true;
+    }
+
+    const auto now = this->now();
+    const bool neutral = isChannelsNeutral(data);
+
+    if (neutral) {
+      if (!startup_neutral_has_prev_time_) {
+        startup_neutral_prev_time_ = now;
+        startup_neutral_has_prev_time_ = true;
+      } else {
+        startup_neutral_accumulated_seconds_ +=
+          (now - startup_neutral_prev_time_).seconds();
+        startup_neutral_prev_time_ = now;
+      }
+
+      if (startup_neutral_accumulated_seconds_ >= startup_neutral_hold_seconds_) {
+        startup_neutral_verified_ = true;
+        RCLCPP_INFO(
+          this->get_logger(),
+          "启动回中校验通过（保持中点 %.2f 秒），开始正常发布控制话题",
+          startup_neutral_accumulated_seconds_);
+        return true;
+      }
+      return false;
+    }
+
+    startup_neutral_accumulated_seconds_ = 0.0;
+    startup_neutral_has_prev_time_ = false;
+
+    if (!startup_neutral_has_warn_time_ ||
+        (now - startup_neutral_last_warn_time_).seconds() >= startup_neutral_warn_interval_) {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "启动回中校验未通过，暂不发布控制话题。"
+        "请保持摇杆/拨轮回中：ch0=%u ch1=%u ch2=%u ch3=%u wheel=%u (mid=%u tol=+-%d)",
+        data.ch0, data.ch1, data.ch2, data.ch3, data.wheel, CHANNEL_MID, startup_neutral_tolerance_);
+      startup_neutral_last_warn_time_ = now;
+      startup_neutral_has_warn_time_ = true;
+    }
+    return false;
   }
 
   // =========================================================================
@@ -619,6 +708,12 @@ private:
   int baud_rate_;
   /** @brief 鼠标按键切换去抖时间（秒） */
   double mouse_toggle_debounce_ = 0.2;
+  /** @brief 启动阶段要求保持中点的时长（秒） */
+  double startup_neutral_hold_seconds_ = 1.0;
+  /** @brief 启动阶段回中判定容差 */
+  int startup_neutral_tolerance_ = 30;
+  /** @brief 启动阶段回中失败告警间隔（秒） */
+  double startup_neutral_warn_interval_ = 1.0;
 
   /** @brief 串口文件描述符 */
   int serial_fd_;
@@ -637,6 +732,18 @@ private:
 
   /** @brief 是否处于超时状态 */
   bool is_timeout_ = false;
+  /** @brief 启动回中校验是否已通过 */
+  bool startup_neutral_verified_ = false;
+  /** @brief 启动回中累积时间（秒） */
+  double startup_neutral_accumulated_seconds_ = 0.0;
+  /** @brief 启动回中阶段是否已有上一次时间戳 */
+  bool startup_neutral_has_prev_time_ = false;
+  /** @brief 启动回中阶段上一帧时间戳 */
+  rclcpp::Time startup_neutral_prev_time_;
+  /** @brief 启动回中告警时间是否有效 */
+  bool startup_neutral_has_warn_time_ = false;
+  /** @brief 启动回中上次告警时间 */
+  rclcpp::Time startup_neutral_last_warn_time_;
 
   /** @brief 定时器 */
   rclcpp::TimerBase::SharedPtr timer_;

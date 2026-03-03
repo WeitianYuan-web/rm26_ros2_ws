@@ -9,6 +9,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
 #include <std_msgs/msg/float32.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <chrono>
 #include <thread>
 #include <atomic>
@@ -38,14 +39,14 @@ public:
         motor1_initialized_(false),
         motor2_initialized_(false) {
 
-    // 声明参数 - 电机1 (速度积分模式，可连续旋转)
+    // 声明参数 - 电机1 (Yaw轴速度积分模式，可连续旋转)
     this->declare_parameter<std::string>("motor1_can_interface", "can0");
     this->declare_parameter<int>("motor1_id", 0x02);
     this->declare_parameter<double>("motor1_max_velocity", 8.0);  // 电机1最大速度 rad/s
     this->declare_parameter<int>("motor1_channel_index", 0);      // 电机1使用的通道索引 (ch0)
     this->declare_parameter<int>("motor1_control_rate", 200);     // 电机1控制环频率 Hz
 
-    // 声明参数 - 电机2 (Yaw轴建议配置)
+    // 声明参数 - 电机2 (Pitch轴建议配置)
     this->declare_parameter<std::string>("motor2_can_interface", "can1");
     this->declare_parameter<int>("motor2_id", 0x01);
     this->declare_parameter<double>("motor2_min_position", -0.5); // 电机2最小位置 rad
@@ -177,6 +178,18 @@ public:
         "motor1/target_position", 10);
     motor2_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
         "motor2/target_position", 10);
+    motor1_actual_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
+        "motor1/actual_position", 10);
+    motor2_actual_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
+        "motor2/actual_position", 10);
+    motor1_multi_turn_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
+        "motor1/multi_turn_position", 10);
+    motor2_multi_turn_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
+        "motor2/multi_turn_position", 10);
+    motor1_turn_count_publisher_ = this->create_publisher<std_msgs::msg::Int32>(
+        "motor1/turn_count", 10);
+    motor2_turn_count_publisher_ = this->create_publisher<std_msgs::msg::Int32>(
+        "motor2/turn_count", 10);
 
     // 创建 QoS 配置
     auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
@@ -279,6 +292,31 @@ private:
       default:
         return "hybrid";
     }
+  }
+
+  void update_multi_turn_position(double raw_position,
+                                  bool &multi_turn_valid,
+                                  double &last_raw_position,
+                                  int &turn_count,
+                                  double &multi_turn_position) {
+    if (!multi_turn_valid) {
+      last_raw_position = raw_position;
+      multi_turn_position = raw_position;
+      turn_count = 0;
+      multi_turn_valid = true;
+      return;
+    }
+
+    constexpr double kWrapRange = 2.0 * M_PI;
+    constexpr double kWrapPeriod = 4.0 * M_PI;
+    const double delta = raw_position - last_raw_position;
+    if (delta > kWrapRange) {
+      --turn_count;
+    } else if (delta < -kWrapRange) {
+      ++turn_count;
+    }
+    multi_turn_position = raw_position + static_cast<double>(turn_count) * kWrapPeriod;
+    last_raw_position = raw_position;
   }
 
   /**
@@ -757,6 +795,39 @@ private:
       motor2_target_position_publisher_->publish(target_msg2);
     }
 
+    if (motor1_initialized_ && motor1_) {
+      update_multi_turn_position(motor1_->position_,
+                                 motor1_multi_turn_valid_,
+                                 motor1_last_raw_position_,
+                                 motor1_turn_count_,
+                                 motor1_multi_turn_position_);
+      auto actual_msg1 = std_msgs::msg::Float32();
+      actual_msg1.data = static_cast<float>(motor1_->position_);
+      motor1_actual_position_publisher_->publish(actual_msg1);
+      auto multi_turn_msg1 = std_msgs::msg::Float32();
+      multi_turn_msg1.data = static_cast<float>(motor1_multi_turn_position_);
+      motor1_multi_turn_position_publisher_->publish(multi_turn_msg1);
+      auto turn_count_msg1 = std_msgs::msg::Int32();
+      turn_count_msg1.data = motor1_turn_count_;
+      motor1_turn_count_publisher_->publish(turn_count_msg1);
+    }
+    if (motor2_initialized_ && motor2_) {
+      update_multi_turn_position(motor2_->position_,
+                                 motor2_multi_turn_valid_,
+                                 motor2_last_raw_position_,
+                                 motor2_turn_count_,
+                                 motor2_multi_turn_position_);
+      auto actual_msg2 = std_msgs::msg::Float32();
+      actual_msg2.data = static_cast<float>(motor2_->position_);
+      motor2_actual_position_publisher_->publish(actual_msg2);
+      auto multi_turn_msg2 = std_msgs::msg::Float32();
+      multi_turn_msg2.data = static_cast<float>(motor2_multi_turn_position_);
+      motor2_multi_turn_position_publisher_->publish(multi_turn_msg2);
+      auto turn_count_msg2 = std_msgs::msg::Int32();
+      turn_count_msg2.data = motor2_turn_count_;
+      motor2_turn_count_publisher_->publish(turn_count_msg2);
+    }
+
     // 发布电机1目标位置
     auto target_msg = std_msgs::msg::Float32();
     target_msg.data = motor1_target_position_;
@@ -870,6 +941,12 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr mouse_subscription_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_target_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_target_position_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_actual_position_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_actual_position_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_multi_turn_position_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_multi_turn_position_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr motor1_turn_count_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr motor2_turn_count_publisher_;
   rclcpp::TimerBase::SharedPtr motor1_control_timer_;      ///< 电机1高频控制定时器
 
   // 电机1参数（速度积分模式）
@@ -883,6 +960,10 @@ private:
   double motor1_target_position_{0.0};     ///< 积分累加的目标位置 rad
   std::chrono::steady_clock::time_point motor1_last_time_; ///< 上次控制时间戳
   bool motor1_last_time_valid_{false};     ///< 时间戳是否已初始化
+  bool motor1_multi_turn_valid_{false};
+  double motor1_last_raw_position_{0.0};
+  int motor1_turn_count_{0};
+  double motor1_multi_turn_position_{0.0};
 
   // 电机2参数（位置映射模式）
   std::string motor2_can_interface_;
@@ -891,6 +972,10 @@ private:
   int motor2_channel_index_;
   double motor2_control_speed_;
   double motor2_control_acceleration_;
+  bool motor2_multi_turn_valid_{false};
+  double motor2_last_raw_position_{0.0};
+  int motor2_turn_count_{0};
+  double motor2_multi_turn_position_{0.0};
 
   // 通用参数
   int rc_min_value_;

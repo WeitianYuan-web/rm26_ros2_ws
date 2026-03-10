@@ -49,8 +49,8 @@ public:
     // 声明参数 - 电机2 (Pitch轴建议配置)
     this->declare_parameter<std::string>("motor2_can_interface", "can1");
     this->declare_parameter<int>("motor2_id", 0x01);
-    this->declare_parameter<double>("motor2_min_position", -0.5); // 电机2最小位置 rad
-    this->declare_parameter<double>("motor2_max_position", 0.5);  // 电机2最大位置 rad
+    this->declare_parameter<double>("motor2_min_position", -0.45); // 电机2最小位置 rad
+    this->declare_parameter<double>("motor2_max_position", 0.45);  // 电机2最大位置 rad
     this->declare_parameter<int>("motor2_channel_index", 1);      // 电机2使用的通道索引 (ch1)
 
     // 电机1控制参数
@@ -382,6 +382,14 @@ private:
           motor->enable_motor();
           initialized = true;
           RCLCPP_INFO(this->get_logger(), "%s已使能（CSP位置控制模式，错误已清除）", motor_name.c_str());
+          RCLCPP_INFO(this->get_logger(), "%s启动位置: %.4f rad (%.2f deg)",
+                      motor_name.c_str(), motor->position_, motor->position_ * 180.0 / M_PI);
+          if (motor1_initialized_ && motor2_initialized_ && motor1_ && motor2_) {
+            RCLCPP_INFO(this->get_logger(),
+                        "启动时电机位置 -> 电机1: %.4f rad (%.2f deg), 电机2: %.4f rad (%.2f deg)",
+                        motor1_->position_, motor1_->position_ * 180.0 / M_PI,
+                        motor2_->position_, motor2_->position_ * 180.0 / M_PI);
+          }
 
           // 初始化成功，清除接收超时（恢复阻塞模式用于正常高频通信）
           struct timeval no_timeout{0, 0};
@@ -719,142 +727,158 @@ private:
       return;
     }
 
-    // 首次进入，用电机当前位置作为初始目标
-    if (!motor1_last_time_valid_) {
-      motor1_last_time_ = std::chrono::steady_clock::now();
-      motor1_target_position_ = motor1_->position_;
-      motor1_last_time_valid_ = true;
-      return;
-    }
+    try {
+      // 首次进入，用电机当前位置作为初始目标
+      if (!motor1_last_time_valid_) {
+        motor1_last_time_ = std::chrono::steady_clock::now();
+        motor1_target_position_ = motor1_->position_;
+        motor1_last_time_valid_ = true;
+        return;
+      }
 
-    auto now = std::chrono::steady_clock::now();
-    double dt = std::chrono::duration<double>(now - motor1_last_time_).count();
-    motor1_last_time_ = now;
+      auto now = std::chrono::steady_clock::now();
+      double dt = std::chrono::duration<double>(now - motor1_last_time_).count();
+      motor1_last_time_ = now;
 
-    // 限制 dt 防止异常跳变
-    if (dt > 0.05) {
-      dt = 0.05;
-    }
+      // 限制 dt 防止异常跳变
+      if (dt > 0.05) {
+        dt = 0.05;
+      }
 
-    if (!tracking_mode_) {
-      // 普通模式：使用当前速度做积分
-      double velocity = motor1_current_velocity_;
-      motor1_target_position_ += velocity * dt;
+      if (!tracking_mode_) {
+        // 普通模式：使用当前速度做积分
+        double velocity = motor1_current_velocity_;
+        motor1_target_position_ += velocity * dt;
 
-      // 鼠标控制电机2：将鼠标Y轴速度积分为目标位置（与电机1一致）
-      const auto now_ros = this->now();
-      const bool mouse_valid =
-          mouse_time_valid_ &&
-          ((now_ros - last_mouse_time_).seconds() <= input_priority_timeout_);
-      const bool use_mouse_pitch =
-          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
-      if (motor2_initialized_ && motor2_ && use_mouse_pitch) {
-        if (!motor2_mouse_target_valid_) {
-          motor2_mouse_target_position_ = motor2_->position_;
-          motor2_mouse_target_valid_ = true;
+        // 鼠标控制电机2：将鼠标Y轴速度积分为目标位置（与电机1一致）
+        const auto now_ros = this->now();
+        const bool mouse_valid =
+            mouse_time_valid_ &&
+            ((now_ros - last_mouse_time_).seconds() <= input_priority_timeout_);
+        const bool use_mouse_pitch =
+            (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
+            ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
+        if (motor2_initialized_ && motor2_ && use_mouse_pitch) {
+          if (!motor2_mouse_target_valid_) {
+            motor2_mouse_target_position_ = motor2_->position_;
+            motor2_mouse_target_valid_ = true;
+          }
+
+          double mouse_pitch_velocity =
+              static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
+          mouse_pitch_velocity = std::max(-motor2_control_speed_,
+                                          std::min(motor2_control_speed_, mouse_pitch_velocity));
+
+          motor2_mouse_target_position_ += mouse_pitch_velocity * dt;
+          motor2_mouse_target_position_ = std::max(
+              motor2_min_position_,
+              std::min(motor2_max_position_, motor2_mouse_target_position_));
+
+          motor2_->RobStrite_Motor_PosCSP_control(
+              motor2_control_speed_,
+              motor2_mouse_target_position_);
+
+          auto target_msg2 = std_msgs::msg::Float32();
+          target_msg2.data = static_cast<float>(motor2_mouse_target_position_);
+          motor2_target_position_publisher_->publish(target_msg2);
         }
+      }
+      // 追踪模式下，motor1_target_position_ 由 armors_callback 更新
 
-        double mouse_pitch_velocity =
-            static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
-        mouse_pitch_velocity = std::max(-motor2_control_speed_,
-                                        std::min(motor2_control_speed_, mouse_pitch_velocity));
+      // 下发电机1 CSP 位置指令（追踪模式下叠加瞄准偏移校准）
+      double motor1_cmd_position = motor1_target_position_;
+      if (tracking_mode_) {
+        motor1_cmd_position += track_yaw_offset_;
+      }
+      motor1_->RobStrite_Motor_PosCSP_control(
+          motor1_control_speed_,
+          motor1_cmd_position);
 
-        motor2_mouse_target_position_ += mouse_pitch_velocity * dt;
-        motor2_mouse_target_position_ = std::max(
-            motor2_min_position_,
-            std::min(motor2_max_position_, motor2_mouse_target_position_));
-
+      // 追踪模式下同时以高频率下发电机2指令
+      if (tracking_mode_ && motor2_initialized_ && motor2_) {
         motor2_->RobStrite_Motor_PosCSP_control(
             motor2_control_speed_,
-            motor2_mouse_target_position_);
-
+            motor2_track_target_position_);
         auto target_msg2 = std_msgs::msg::Float32();
-        target_msg2.data = static_cast<float>(motor2_mouse_target_position_);
+        target_msg2.data = motor2_track_target_position_;
         motor2_target_position_publisher_->publish(target_msg2);
       }
-    }
-    // 追踪模式下，motor1_target_position_ 由 armors_callback 更新
 
-    // 下发电机1 CSP 位置指令（追踪模式下叠加瞄准偏移校准）
-    double motor1_cmd_position = motor1_target_position_;
-    if (tracking_mode_) {
-      motor1_cmd_position += track_yaw_offset_;
-    }
-    motor1_->RobStrite_Motor_PosCSP_control(
-        motor1_control_speed_,
-        motor1_cmd_position);
-
-    // 追踪模式下同时以高频率下发电机2指令
-    if (tracking_mode_ && motor2_initialized_ && motor2_) {
-      motor2_->RobStrite_Motor_PosCSP_control(
-          motor2_control_speed_,
-          motor2_track_target_position_);
-      auto target_msg2 = std_msgs::msg::Float32();
-      target_msg2.data = motor2_track_target_position_;
-      motor2_target_position_publisher_->publish(target_msg2);
-    }
-
-    if (motor1_initialized_ && motor1_) {
-      update_multi_turn_position(motor1_->position_,
-                                 motor1_multi_turn_valid_,
-                                 motor1_last_raw_position_,
-                                 motor1_turn_count_,
-                                 motor1_multi_turn_position_);
-      auto actual_msg1 = std_msgs::msg::Float32();
-      actual_msg1.data = static_cast<float>(motor1_->position_);
-      motor1_actual_position_publisher_->publish(actual_msg1);
-      auto multi_turn_msg1 = std_msgs::msg::Float32();
-      multi_turn_msg1.data = static_cast<float>(motor1_multi_turn_position_);
-      motor1_multi_turn_position_publisher_->publish(multi_turn_msg1);
-      auto turn_count_msg1 = std_msgs::msg::Int32();
-      turn_count_msg1.data = motor1_turn_count_;
-      motor1_turn_count_publisher_->publish(turn_count_msg1);
-    }
-    if (motor2_initialized_ && motor2_) {
-      update_multi_turn_position(motor2_->position_,
-                                 motor2_multi_turn_valid_,
-                                 motor2_last_raw_position_,
-                                 motor2_turn_count_,
-                                 motor2_multi_turn_position_);
-      auto actual_msg2 = std_msgs::msg::Float32();
-      actual_msg2.data = static_cast<float>(motor2_->position_);
-      motor2_actual_position_publisher_->publish(actual_msg2);
-      auto multi_turn_msg2 = std_msgs::msg::Float32();
-      multi_turn_msg2.data = static_cast<float>(motor2_multi_turn_position_);
-      motor2_multi_turn_position_publisher_->publish(multi_turn_msg2);
-      auto turn_count_msg2 = std_msgs::msg::Int32();
-      turn_count_msg2.data = motor2_turn_count_;
-      motor2_turn_count_publisher_->publish(turn_count_msg2);
-    }
-
-    // 发布电机1目标位置
-    auto target_msg = std_msgs::msg::Float32();
-    target_msg.data = motor1_target_position_;
-    motor1_target_position_publisher_->publish(target_msg);
-
-    // 定期打印信息（降低频率）
-    static int counter1 = 0;
-    if (++counter1 >= motor1_control_rate_) { // 约每秒打印一次
-      if (tracking_mode_) {
-        RCLCPP_INFO(this->get_logger(),
-                    "电机1(追踪模式@%dHz): "
-                    "目标位置=%.4f rad (%.2f deg), "
-                    "实际位置=%.4f rad (%.2f deg)",
-                    motor1_control_rate_,
-                    motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
-                    motor1_->position_, motor1_->position_ * 180.0 / M_PI);
-      } else {
-        RCLCPP_INFO(this->get_logger(),
-                    "电机1(速度积分@%dHz): 速度=%.4f rad/s, "
-                    "目标位置=%.4f rad (%.2f deg), "
-                    "实际位置=%.4f rad (%.2f deg)",
-                    motor1_control_rate_,
-                    motor1_current_velocity_,
-                    motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
-                    motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+      if (motor1_initialized_ && motor1_) {
+        update_multi_turn_position(motor1_->position_,
+                                   motor1_multi_turn_valid_,
+                                   motor1_last_raw_position_,
+                                   motor1_turn_count_,
+                                   motor1_multi_turn_position_);
+        auto actual_msg1 = std_msgs::msg::Float32();
+        actual_msg1.data = static_cast<float>(motor1_->position_);
+        motor1_actual_position_publisher_->publish(actual_msg1);
+        auto multi_turn_msg1 = std_msgs::msg::Float32();
+        multi_turn_msg1.data = static_cast<float>(motor1_multi_turn_position_);
+        motor1_multi_turn_position_publisher_->publish(multi_turn_msg1);
+        auto turn_count_msg1 = std_msgs::msg::Int32();
+        turn_count_msg1.data = motor1_turn_count_;
+        motor1_turn_count_publisher_->publish(turn_count_msg1);
       }
-      counter1 = 0;
+      if (motor2_initialized_ && motor2_) {
+        update_multi_turn_position(motor2_->position_,
+                                   motor2_multi_turn_valid_,
+                                   motor2_last_raw_position_,
+                                   motor2_turn_count_,
+                                   motor2_multi_turn_position_);
+        auto actual_msg2 = std_msgs::msg::Float32();
+        actual_msg2.data = static_cast<float>(motor2_->position_);
+        motor2_actual_position_publisher_->publish(actual_msg2);
+        auto multi_turn_msg2 = std_msgs::msg::Float32();
+        multi_turn_msg2.data = static_cast<float>(motor2_multi_turn_position_);
+        motor2_multi_turn_position_publisher_->publish(multi_turn_msg2);
+        auto turn_count_msg2 = std_msgs::msg::Int32();
+        turn_count_msg2.data = motor2_turn_count_;
+        motor2_turn_count_publisher_->publish(turn_count_msg2);
+      }
+
+      // 发布电机1目标位置
+      auto target_msg = std_msgs::msg::Float32();
+      target_msg.data = motor1_target_position_;
+      motor1_target_position_publisher_->publish(target_msg);
+
+      // 定期打印信息（降低频率）
+      static int counter1 = 0;
+      if (++counter1 >= motor1_control_rate_) { // 约每秒打印一次
+        if (tracking_mode_) {
+          RCLCPP_INFO(this->get_logger(),
+                      "电机1(追踪模式@%dHz): "
+                      "目标位置=%.4f rad (%.2f deg), "
+                      "实际位置=%.4f rad (%.2f deg)",
+                      motor1_control_rate_,
+                      motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
+                      motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+        } else {
+          RCLCPP_INFO(this->get_logger(),
+                      "电机1(速度积分@%dHz): 速度=%.4f rad/s, "
+                      "目标位置=%.4f rad (%.2f deg), "
+                      "实际位置=%.4f rad (%.2f deg)",
+                      motor1_control_rate_,
+                      motor1_current_velocity_,
+                      motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
+                      motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+        }
+        counter1 = 0;
+      }
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                            "电机控制循环异常，已暂停控制避免程序退出: %s", e.what());
+      motor1_initialized_ = false;
+      motor2_initialized_ = false;
+      motor1_last_time_valid_ = false;
+      motor2_mouse_target_valid_ = false;
+    } catch (...) {
+      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                            "电机控制循环发生未知异常，已暂停控制避免程序退出");
+      motor1_initialized_ = false;
+      motor2_initialized_ = false;
+      motor1_last_time_valid_ = false;
+      motor2_mouse_target_valid_ = false;
     }
   }
 
@@ -1037,8 +1061,19 @@ int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
 
   auto node = std::make_shared<GimbalControlNode>();
-
-  rclcpp::spin(node);
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  rclcpp::WallRate loop_rate(200.0);
+  while (rclcpp::ok()) {
+    try {
+      executor.spin_some();
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(node->get_logger(), "执行器捕获异常，继续运行: %s", e.what());
+    } catch (...) {
+      RCLCPP_ERROR(node->get_logger(), "执行器捕获未知异常，继续运行");
+    }
+    loop_rate.sleep();
+  }
 
   rclcpp::shutdown();
 

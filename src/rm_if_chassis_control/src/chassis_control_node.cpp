@@ -17,10 +17,11 @@
  *   - 控制帧 PC→MCU:
  *       [0xAA] + max_linear_accel(f32) + max_angular_accel(f32)
  *              + max_linear_vel(f32)   + max_angular_vel(f32)
- *              + vx(f32) + vy(f32) + vw(f32) + feed_rpm(f32) = 33B
+ *              + vx(f32) + vy(f32) + vw(f32) + feed_rpm(f32) + crc16(u16) = 35B
  *   - 反馈帧 MCU→PC: [0x55] + x(f32) + y(f32) + θ(f32) + vx(f32) + vy(f32)
  *                      + vw(f32) + wheel1_v(f32) + wheel2_v(f32)
- *                      + wheel3_v(f32) + wheel4_v(f32) + feed_rpm(f32) + gyro_z(f32) + [0xAA] = 50B
+ *                      + wheel3_v(f32) + wheel4_v(f32) + feed_rpm(f32) + gyro_z(f32)
+ *                      + crc16(u16) + [0xAA] = 52B
  *
  * 供弹速度控制逻辑：
  *   - 订阅 /vt_remote/key_toggles，使用 fn_right 切换状态跟踪 booster 高/低速模式
@@ -38,18 +39,18 @@
  *
  * 参数：
  *   - serial_port  (string) : 串口设备路径，默认 "/dev/chassis_usb"
- *   - baud_rate    (int)    : 波特率，默认 921600
+ *   - baud_rate    (int)    : 波特率，默认 460800
  *   - max_linear_accel  (double) : 最大线加速度 (m/s²)，默认 3.0
  *   - max_angular_accel (double) : 最大角加速度 (rad/s²)，默认 6.0
  *   - max_linear_vel    (double) : 最大线速度 (m/s)，默认 4.0
  *   - max_angular_vel   (double) : 最大角速度 (rad/s)，默认 10.0
+ *   - min_linear_vel    (double) : 最小线速度 (m/s)，默认 0.5；当指令速度非零且小于此值时按此速度运动
  *   - deadzone     (int)    : 摇杆死区（原始值），默认 20
  */
 
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
-
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -72,17 +73,119 @@
 
 /** @brief 控制帧帧头 */
 static constexpr uint8_t CTRL_FRAME_HEADER = 0xAA;
-/** @brief 控制帧长度 (1B 帧头 + 8×float32) */
-static constexpr size_t CTRL_FRAME_SIZE = 33;
+/** @brief 控制帧 CRC 起始偏移 */
+static constexpr size_t CTRL_FRAME_CRC_OFFSET = 33;
+/** @brief 控制帧 CRC 计算长度 (从帧头到 feed_rpm，含首不含 CRC) */
+static constexpr size_t CTRL_FRAME_CRC_LEN = 33;
+/** @brief 控制帧长度 (1B 帧头 + 8×float32 + 2B CRC16) */
+static constexpr size_t CTRL_FRAME_SIZE = 35;
 
 /** @brief 反馈帧帧头 */
 static constexpr uint8_t FB_FRAME_HEADER = 0x55;
 /** @brief 反馈帧帧尾 */
 static constexpr uint8_t FB_FRAME_TAIL = 0xAA;
-/** @brief 反馈帧长度 (1B 帧头 + 12×float32 + 1B 帧尾) */
-static constexpr size_t FB_FRAME_SIZE = 50;
+/** @brief 反馈帧 CRC 字段偏移 */
+static constexpr size_t FB_FRAME_CRC_OFFSET = 49;
+/** @brief 反馈帧 CRC 计算长度 (从帧头到 gyro_z，含首不含 CRC/tail) */
+static constexpr size_t FB_FRAME_CRC_LEN = 49;
+/** @brief 反馈帧长度 (1B 帧头 + 12×float32 + 2B CRC16 + 1B 帧尾) */
+static constexpr size_t FB_FRAME_SIZE = 52;
 /** @brief 反馈帧 float 数量 */
 static constexpr size_t FB_FLOAT_COUNT = 12;
+
+/**
+ * @brief UART控制帧结构体
+ * @details 帧格式:
+ * [帧头1B][最大线加速度4B][最大角加速度4B][最大线速度4B][最大角速度4B]
+ * [vx4B][vy4B][vw4B][feed_rpm4B][crc16 2B]
+ */
+typedef struct
+{
+  uint8_t header;            ///< 帧头 (0xAA)
+  float max_linear_accel;    ///< 最大线加速度 (m/s²)
+  float max_angular_accel;   ///< 最大角加速度 (rad/s²)
+  float max_linear_vel;      ///< 最大线速度 (m/s)
+  float max_angular_vel;     ///< 最大角速度 (rad/s)
+  float vel_x;               ///< x方向线速度 (m/s)
+  float vel_y;               ///< y方向线速度 (m/s)
+  float vel_angular;         ///< 角速度 (rad/s) 逆时针为正
+  float feed_motor_rpm;      ///< 供弹电机转速 (RPM)
+  uint16_t crc;              ///< CRC16校验
+} __attribute__((packed)) Control_Frame_t;
+
+/**
+ * @brief 反馈帧结构体
+ * @details 帧格式:
+ * [帧头1B][x4B][y4B][theta4B][vx4B][vy4B][vw4B][wheel1_v4B][wheel2_v4B]
+ * [wheel3_v4B][wheel4_v4B][feed_rpm4B][gyro_z4B][crc16 2B][帧尾1B]
+ */
+typedef struct
+{
+  uint8_t header;            ///< 帧头 (0x55)
+  float x;                   ///< 位置x (m)
+  float y;                   ///< 位置y (m)
+  float theta;               ///< 姿态角 (rad)
+  float vel_x;               ///< 实际速度x (m/s)
+  float vel_y;               ///< 实际速度y (m/s)
+  float vel_angular;         ///< 实际角速度 (rad/s)
+  float wheel_vel_1;         ///< 1号轮实际线速度 (m/s)
+  float wheel_vel_2;         ///< 2号轮实际线速度 (m/s)
+  float wheel_vel_3;         ///< 3号轮实际线速度 (m/s)
+  float wheel_vel_4;         ///< 4号轮实际线速度 (m/s)
+  float feed_rpm;            ///< 供弹电机实际转速 (RPM)
+  float gyro_z;              ///< BMI088 z轴角速度 (rad/s)
+  uint16_t crc;              ///< CRC16校验
+  uint8_t tail;              ///< 帧尾 (0xAA)
+} __attribute__((packed)) Feedback_Frame_t;
+
+static_assert(sizeof(Control_Frame_t) == CTRL_FRAME_SIZE,
+              "Control_Frame_t size mismatch with CTRL_FRAME_SIZE");
+static_assert(sizeof(Feedback_Frame_t) == FB_FRAME_SIZE,
+              "Feedback_Frame_t size mismatch with FB_FRAME_SIZE");
+
+/**
+ * @brief CRC16-CCITT 计算
+ * @param data 数据起始地址
+ * @param length 数据长度（字节）
+ * @return CRC16 校验值
+ */
+static uint16_t CRC16_CCITT(const uint8_t * data, uint16_t length)
+{
+  uint16_t crc = 0xFFFF;
+  for (uint16_t i = 0; i < length; i++) {
+    crc ^= static_cast<uint16_t>(data[i]) << 8;
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      if (crc & 0x8000) {
+        crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);
+      } else {
+        crc = static_cast<uint16_t>(crc << 1);
+      }
+    }
+  }
+  return crc;
+}
+
+/**
+ * @brief 写入 uint16 小端值
+ * @param dst 目标地址（至少 2 字节）
+ * @param value 待写入值
+ */
+static inline void writeU16LE(uint8_t * dst, uint16_t value)
+{
+  dst[0] = static_cast<uint8_t>(value & 0xFFu);
+  dst[1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+}
+
+/**
+ * @brief 读取 uint16 小端值
+ * @param src 源地址（至少 2 字节）
+ * @return 读取出的 uint16 值
+ */
+static inline uint16_t readU16LE(const uint8_t * src)
+{
+  return static_cast<uint16_t>(src[0]) |
+         (static_cast<uint16_t>(src[1]) << 8);
+}
 
 /* ========================================================================= */
 /*  摇杆通道常量                                                              */
@@ -140,11 +243,12 @@ public:
   {
     /* -------- 声明 & 读取参数 -------- */
     this->declare_parameter<std::string>("serial_port", "/dev/ttyUSB0");
-    this->declare_parameter<int>("baud_rate", 921600);
-    this->declare_parameter<double>("max_linear_accel", 2.0);
-    this->declare_parameter<double>("max_angular_accel", 6.0);
-    this->declare_parameter<double>("max_linear_vel", 2.0);
+    this->declare_parameter<int>("baud_rate", 460800);
+    this->declare_parameter<double>("max_linear_accel", 4.0);
+    this->declare_parameter<double>("max_angular_accel", 8.0);
+    this->declare_parameter<double>("max_linear_vel", 1.5);
     this->declare_parameter<double>("max_angular_vel", 4.0);
+    this->declare_parameter<double>("min_linear_vel", 1.0);
     this->declare_parameter<std::string>("fire_control_source", "hybrid");
     this->declare_parameter<double>("input_priority_timeout", 0.3);
     this->declare_parameter<int>("deadzone", 2);
@@ -155,6 +259,7 @@ public:
     max_angular_accel_ = this->get_parameter("max_angular_accel").as_double();
     max_linear_vel_    = this->get_parameter("max_linear_vel").as_double();
     max_angular_vel_   = this->get_parameter("max_angular_vel").as_double();
+    min_linear_vel_    = this->get_parameter("min_linear_vel").as_double();
     const std::string fire_control_source =
       this->get_parameter("fire_control_source").as_string();
     input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
@@ -211,8 +316,8 @@ public:
                 "ChassisControlNode 已启动 | 串口: %s | 波特率: %d | 控制频率: 200Hz",
                 serial_port_.c_str(), baud_rate_);
     RCLCPP_INFO(this->get_logger(),
-                "限制参数: 线加速度=%.2f 角加速度=%.2f | 线速度=%.2f 角速度=%.2f | 死区: %d",
-                max_linear_accel_, max_angular_accel_, max_linear_vel_, max_angular_vel_, deadzone_);
+                "限制参数: 线加速度=%.2f 角加速度=%.2f | 线速度=%.2f~%.2f 角速度=%.2f | 死区: %d",
+                max_linear_accel_, max_angular_accel_, min_linear_vel_, max_linear_vel_, max_angular_vel_, deadzone_);
     RCLCPP_INFO(this->get_logger(),
                 "发射/供弹控制输入源: %s",
                 fireControlSourceToString(fire_control_source_));
@@ -291,7 +396,7 @@ private:
 
     /* ch2 → vx, ch3 → vy, wheel(index 4) → vw */
     const float vx = mapChannelToVelocity(msg->data[2], max_linear_vel_);
-    const float vy = mapChannelToVelocity(msg->data[3], max_linear_vel_);
+    const float vy = -mapChannelToVelocity(msg->data[3], max_linear_vel_);
     const float vw = mapChannelToVelocity(msg->data[4], max_angular_vel_);
 
     {
@@ -508,6 +613,14 @@ private:
       }
     }
 
+    /* 最小线速度：当指令速度非零且小于 min_linear_vel 时，按 min_linear_vel 运动（保持方向） */
+    const float linear_mag = std::sqrt(vx * vx + vy * vy);
+    if (linear_mag > 1e-6f && linear_mag < static_cast<float>(min_linear_vel_)) {
+      const float scale = static_cast<float>(min_linear_vel_) / linear_mag;
+      vx *= scale;
+      vy *= scale;
+    }
+
     /* 发送控制帧 */
     sendControlFrame(vx, vy, vw, feed);
 
@@ -579,6 +692,8 @@ private:
     std::memcpy(&ctrl_frame_[21], &vy,                  sizeof(float));
     std::memcpy(&ctrl_frame_[25], &vw,                  sizeof(float));
     std::memcpy(&ctrl_frame_[29], &feed_rpm,            sizeof(float));
+    const uint16_t crc = CRC16_CCITT(ctrl_frame_, static_cast<uint16_t>(CTRL_FRAME_CRC_LEN));
+    writeU16LE(&ctrl_frame_[CTRL_FRAME_CRC_OFFSET], crc);
 
     const ssize_t written = ::write(serial_fd_, ctrl_frame_, CTRL_FRAME_SIZE);
     if (written < 0) {
@@ -629,8 +744,20 @@ private:
         break;
       }
 
-      /* 校验帧尾 */
+      /* 校验帧尾和 CRC */
       if (rx_buffer_[FB_FRAME_SIZE - 1] == FB_FRAME_TAIL) {
+        const uint16_t rx_crc = readU16LE(&rx_buffer_[FB_FRAME_CRC_OFFSET]);
+        const uint16_t calc_crc =
+          CRC16_CCITT(rx_buffer_.data(), static_cast<uint16_t>(FB_FRAME_CRC_LEN));
+        if (rx_crc != calc_crc) {
+          RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                               "反馈帧 CRC 校验失败: rx=0x%04X calc=0x%04X",
+                               rx_crc, calc_crc);
+          rx_buffer_.erase(rx_buffer_.begin(),
+                           rx_buffer_.begin() + static_cast<long>(FB_FRAME_SIZE));
+          continue;
+        }
+
         /* 解析 12 个 float32: x, y, theta, vx, vy, vw, wheel1_v, wheel2_v, wheel3_v, wheel4_v, feed_rpm, gyro_z */
         float values[FB_FLOAT_COUNT];
         std::memcpy(values, &rx_buffer_[1], FB_FLOAT_COUNT * sizeof(float));
@@ -834,6 +961,8 @@ private:
   double max_linear_vel_{};
   /** @brief 最大角速度 (rad/s) */
   double max_angular_vel_{};
+  /** @brief 最小线速度 (m/s)；当指令速度非零且小于此值时按此速度运动 */
+  double min_linear_vel_{};
   /** @brief 摇杆死区（原始值单位） */
   int deadzone_{};
   /** @brief 发射/供弹控制输入源 */

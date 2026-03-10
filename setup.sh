@@ -6,42 +6,48 @@
 
 set -e
 
+SUDO_PASS="linkerhand"
+
+run_sudo() {
+  echo "$SUDO_PASS" | sudo -S -p '' "$@"
+}
+
 echo "========================================="
 echo "  一键配置 CAN 接口 & USB 串口权限"
 echo "========================================="
 
 # ---- 加载 CAN 内核模块 ----
 echo "[1/5] 加载 CAN 内核模块..."
-sudo modprobe can
-sudo modprobe can_raw
-sudo modprobe can_dev
+run_sudo modprobe can
+run_sudo modprobe can_raw
+run_sudo modprobe can_dev
 echo "  -> CAN 内核模块加载完成"
 
 # ---- 配置 CAN0 ----
 echo "[2/5] 配置 CAN0..."
-sudo ip link set can0 type can bitrate 1000000
-sudo ip link set can0 up
-sudo ip link set can0 txqueuelen 100
+run_sudo ip link set can0 type can bitrate 1000000
+run_sudo ip link set can0 up
+run_sudo ip link set can0 txqueuelen 100
 echo "  -> CAN0 配置完成"
 
 # ---- 配置 CAN1 ----
 echo "[3/5] 配置 CAN1..."
-sudo ip link set can1 type can bitrate 1000000
-sudo ip link set can1 up
-sudo ip link set can1 txqueuelen 100
+run_sudo ip link set can1 type can bitrate 1000000
+run_sudo ip link set can1 up
+run_sudo ip link set can1 txqueuelen 100
 echo "  -> CAN1 配置完成"
 
 # ---- 配置 CAN2 (供弹电机) ----
 echo "[4/5] 配置 CAN2..."
-sudo ip link set can2 type can bitrate 1000000
-sudo ip link set can2 up
-sudo ip link set can2 txqueuelen 100
+run_sudo ip link set can2 type can bitrate 1000000
+run_sudo ip link set can2 up
+run_sudo ip link set can2 txqueuelen 100
 echo "  -> CAN2 配置完成"
 
 # ---- 配置 USB 串口权限 ----
 echo "[5/5] 配置 USB 串口权限..."
-sudo chmod 666 /dev/ttyUSB0
-sudo chmod 666 /dev/ttyUSB1
+run_sudo chmod 666 /dev/ttyUSB0
+run_sudo chmod 666 /dev/ttyUSB1
 echo "  -> USB 串口权限配置完成"
 
 # ---- 验证 ----

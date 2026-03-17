@@ -12,6 +12,25 @@ run_sudo() {
   echo "$SUDO_PASS" | sudo -S -p '' "$@"
 }
 
+configure_can() {
+  local can_if="$1"
+  local bitrate="$2"
+  local can_status
+
+  can_status="$(ip -o link show "$can_if" 2>/dev/null || true)"
+
+  if [[ "$can_status" == *"state UP"* ]]; then
+    echo "  -> $can_if 已在工作，跳过配置"
+    return 0
+  fi
+
+  run_sudo ip link set "$can_if" down 2>/dev/null || true
+  run_sudo ip link set "$can_if" type can bitrate "$bitrate"
+  run_sudo ip link set "$can_if" up
+  run_sudo ip link set "$can_if" txqueuelen 100
+  echo "  -> $can_if 配置完成"
+}
+
 echo "========================================="
 echo "  一键配置 CAN 接口 & USB 串口权限"
 echo "========================================="
@@ -25,24 +44,15 @@ echo "  -> CAN 内核模块加载完成"
 
 # ---- 配置 CAN0 ----
 echo "[2/5] 配置 CAN0..."
-run_sudo ip link set can0 type can bitrate 1000000
-run_sudo ip link set can0 up
-run_sudo ip link set can0 txqueuelen 100
-echo "  -> CAN0 配置完成"
+configure_can can0 1000000
 
 # ---- 配置 CAN1 ----
 echo "[3/5] 配置 CAN1..."
-run_sudo ip link set can1 type can bitrate 1000000
-run_sudo ip link set can1 up
-run_sudo ip link set can1 txqueuelen 100
-echo "  -> CAN1 配置完成"
+configure_can can1 1000000
 
 # ---- 配置 CAN2 (供弹电机) ----
 echo "[4/5] 配置 CAN2..."
-run_sudo ip link set can2 type can bitrate 1000000
-run_sudo ip link set can2 up
-run_sudo ip link set can2 txqueuelen 100
-echo "  -> CAN2 配置完成"
+configure_can can2 1000000
 
 # ---- 配置 USB 串口权限 ----
 echo "[5/5] 配置 USB 串口权限..."

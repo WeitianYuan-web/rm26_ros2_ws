@@ -15,6 +15,11 @@
 #include <atomic>
 #include <memory>
 #include <cmath>
+#include <set>
+#include <cstdlib>
+#include <string>
+#include <functional>
+#include <exception>
 #include <auto_aim_interfaces/msg/armors.hpp>
 
 /**
@@ -47,10 +52,10 @@ public:
     this->declare_parameter<int>("motor1_control_rate", 200);     // 电机1控制环频率 Hz
 
     // 声明参数 - 电机2 (Pitch轴建议配置)
-    this->declare_parameter<std::string>("motor2_can_interface", "can1");
+    this->declare_parameter<std::string>("motor2_can_interface", "can0");
     this->declare_parameter<int>("motor2_id", 0x01);
-    this->declare_parameter<double>("motor2_min_position", -0.45); // 电机2最小位置 rad
-    this->declare_parameter<double>("motor2_max_position", 0.45);  // 电机2最大位置 rad
+    this->declare_parameter<double>("motor2_min_position", -0.21); // 电机2最小位置 rad
+    this->declare_parameter<double>("motor2_max_position", 0.31);  // 电机2最大位置 rad
     this->declare_parameter<int>("motor2_channel_index", 1);      // 电机2使用的通道索引 (ch1)
 
     // 电机1控制参数
@@ -93,6 +98,13 @@ public:
     // 弹道下坠补偿参数
     this->declare_parameter<double>("bullet_velocity", 20.0);  // 弹丸初速度 m/s
     this->declare_parameter<double>("gravity", 9.81);           // 重力加速度 m/s²
+    this->declare_parameter<bool>("restart_can_on_startup", true);
+    this->declare_parameter<int>("can_bitrate", 1000000);
+    this->declare_parameter<int>("can_restart_ms", 100);
+    this->declare_parameter<bool>("can_use_sudo", true);
+    this->declare_parameter<std::string>("can_sudo_password", "");
+    this->declare_parameter<int>("init_command_burst_count", 3);
+    this->declare_parameter<int>("init_command_burst_interval_ms", 5);
 
     // 获取参数
     motor1_can_interface_ = this->get_parameter("motor1_can_interface").as_string();
@@ -141,6 +153,23 @@ public:
 
     bullet_velocity_ = this->get_parameter("bullet_velocity").as_double();
     gravity_ = this->get_parameter("gravity").as_double();
+    restart_can_on_startup_ = this->get_parameter("restart_can_on_startup").as_bool();
+    can_bitrate_ = this->get_parameter("can_bitrate").as_int();
+    can_restart_ms_ = this->get_parameter("can_restart_ms").as_int();
+    can_use_sudo_ = this->get_parameter("can_use_sudo").as_bool();
+    can_sudo_password_ = this->get_parameter("can_sudo_password").as_string();
+    init_command_burst_count_ = this->get_parameter("init_command_burst_count").as_int();
+    init_command_burst_interval_ms_ = this->get_parameter("init_command_burst_interval_ms").as_int();
+    if (init_command_burst_count_ < 1) {
+      init_command_burst_count_ = 1;
+    }
+    if (init_command_burst_interval_ms_ < 0) {
+      init_command_burst_interval_ms_ = 0;
+    }
+
+    if (restart_can_on_startup_) {
+      restart_configured_can_interfaces();
+    }
 
     // 使用参数创建电机对象
     motor1_ = std::make_unique<RobStrideMotor>(
@@ -178,18 +207,10 @@ public:
         "motor1/target_position", 10);
     motor2_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
         "motor2/target_position", 10);
-    motor1_actual_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
-        "motor1/actual_position", 10);
-    motor2_actual_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
-        "motor2/actual_position", 10);
     motor1_multi_turn_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
         "motor1/multi_turn_position", 10);
     motor2_multi_turn_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
         "motor2/multi_turn_position", 10);
-    motor1_turn_count_publisher_ = this->create_publisher<std_msgs::msg::Int32>(
-        "motor1/turn_count", 10);
-    motor2_turn_count_publisher_ = this->create_publisher<std_msgs::msg::Int32>(
-        "motor2/turn_count", 10);
 
     // 创建 QoS 配置
     auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
@@ -294,29 +315,119 @@ private:
     }
   }
 
-  void update_multi_turn_position(double raw_position,
-                                  bool &multi_turn_valid,
-                                  double &last_raw_position,
-                                  int &turn_count,
-                                  double &multi_turn_position) {
-    if (!multi_turn_valid) {
-      last_raw_position = raw_position;
-      multi_turn_position = raw_position;
-      turn_count = 0;
-      multi_turn_valid = true;
-      return;
+  double read_motor_mech_position(std::unique_ptr<RobStrideMotor>& motor,
+                                  const std::string& motor_name,
+                                  double fallback_position) {
+    if (!motor) {
+      return fallback_position;
+    }
+    try {
+      motor->Get_RobStrite_Motor_parameter(0x7019);
+      return static_cast<double>(motor->drw.mechPos.data);
+    } catch (const std::exception &e) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                           "%s读取原始多圈角(mechPos)失败，保留上次值: %s",
+                           motor_name.c_str(), e.what());
+      return fallback_position;
+    }
+  }
+
+  /**
+   * @brief 初始化电机（异步方式，带超时）
+   * @param motor 电机对象指针
+   * @param initialized 初始化标志
+   * @param motor_name 电机名称（用于日志）
+   */
+  std::string shell_single_quote_escape(const std::string &input) {
+    std::string escaped;
+    escaped.reserve(input.size() + 8);
+    for (const char c : input) {
+      if (c == '\'') {
+        escaped += "'\\''";
+      } else {
+        escaped.push_back(c);
+      }
+    }
+    return escaped;
+  }
+
+  std::string build_privileged_command(const std::string &command) {
+    if (!can_use_sudo_) {
+      return command;
     }
 
-    constexpr double kWrapRange = 2.0 * M_PI;
-    constexpr double kWrapPeriod = 4.0 * M_PI;
-    const double delta = raw_position - last_raw_position;
-    if (delta > kWrapRange) {
-      --turn_count;
-    } else if (delta < -kWrapRange) {
-      ++turn_count;
+    if (can_sudo_password_.empty()) {
+      return "sudo -n " + command;
     }
-    multi_turn_position = raw_position + static_cast<double>(turn_count) * kWrapPeriod;
-    last_raw_position = raw_position;
+
+    const std::string escaped_password = shell_single_quote_escape(can_sudo_password_);
+    return "bash -lc \"printf '%s\\n' '" + escaped_password +
+           "' | sudo -S -p '' " + command + "\"";
+  }
+
+  bool run_shell_command(const std::string &command) {
+    const std::string actual_command = build_privileged_command(command);
+    const int ret = std::system(actual_command.c_str());
+    return ret == 0;
+  }
+
+  /**
+   * @brief 启动时重启指定CAN接口，尽量恢复总线异常状态
+   * @param interface_name CAN接口名（如can0/can1）
+   * @return true 执行成功
+   * @return false 执行失败
+   */
+  bool restart_can_interface(const std::string &interface_name) {
+    if (interface_name.empty()) {
+      return false;
+    }
+
+    const std::string down_cmd = "ip link set " + interface_name + " down";
+    const std::string config_cmd = "ip link set " + interface_name +
+                                   " type can bitrate " + std::to_string(can_bitrate_) +
+                                   " restart-ms " + std::to_string(can_restart_ms_);
+    const std::string up_cmd = "ip link set " + interface_name + " up";
+
+    RCLCPP_INFO(this->get_logger(),
+                "重启CAN接口 %s: bitrate=%d, restart-ms=%d",
+                interface_name.c_str(), can_bitrate_, can_restart_ms_);
+
+    bool ok = true;
+    if (!run_shell_command(down_cmd)) {
+      RCLCPP_WARN(this->get_logger(), "执行失败: %s", down_cmd.c_str());
+      ok = false;
+    }
+    if (!run_shell_command(config_cmd)) {
+      RCLCPP_WARN(this->get_logger(), "执行失败: %s", config_cmd.c_str());
+      ok = false;
+    }
+    if (!run_shell_command(up_cmd)) {
+      RCLCPP_WARN(this->get_logger(), "执行失败: %s", up_cmd.c_str());
+      ok = false;
+    }
+
+    if (ok) {
+      RCLCPP_INFO(this->get_logger(), "CAN接口 %s 重启完成", interface_name.c_str());
+    } else {
+      RCLCPP_WARN(this->get_logger(), "CAN接口 %s 重启未完全成功（检查权限和接口状态）", interface_name.c_str());
+    }
+    return ok;
+  }
+
+  /**
+   * @brief 启动时重启当前节点使用到的CAN接口（去重后依次执行）
+   */
+  void restart_configured_can_interfaces() {
+    std::set<std::string> interfaces;
+    interfaces.insert(motor1_can_interface_);
+    interfaces.insert(motor2_can_interface_);
+
+    for (const auto &iface : interfaces) {
+      if (iface.empty()) {
+        continue;
+      }
+      restart_can_interface(iface);
+    }
   }
 
   /**
@@ -355,35 +466,98 @@ private:
 
       for (int attempt = 1; attempt <= max_retries; ++attempt) {
         try {
+          auto execute_init_command_burst = [this, &motor_name](const std::function<void()> &send_once,
+                                                                const std::string &command_name) {
+            std::exception_ptr last_error;
+            for (int i = 0; i < init_command_burst_count_; ++i) {
+              try {
+                send_once();
+                if (i > 0) {
+                  RCLCPP_INFO(this->get_logger(), "%s: %s在第%d次连发成功",
+                              motor_name.c_str(), command_name.c_str(), i + 1);
+                }
+                return;
+              } catch (...) {
+                last_error = std::current_exception();
+              }
+
+              if (i + 1 < init_command_burst_count_ && init_command_burst_interval_ms_ > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(init_command_burst_interval_ms_));
+              }
+            }
+            if (last_error) {
+              std::rethrow_exception(last_error);
+            }
+          };
+
           RCLCPP_INFO(this->get_logger(), "%s: 初始化尝试 %d/%d ...",
                       motor_name.c_str(), attempt, max_retries);
 
+          try {
+            RCLCPP_INFO(this->get_logger(), "%s: 读取初始化前状态...", motor_name.c_str());
+            motor->receive_status_frame();
+            RCLCPP_INFO(this->get_logger(),
+                        "%s初始化前状态: pos=%.4f rad, vel=%.4f rad/s, torque=%.4f Nm, temp=%.1f C, err=0x%02X, pattern=%u",
+                        motor_name.c_str(),
+                        static_cast<double>(motor->position_),
+                        static_cast<double>(motor->velocity_),
+                        static_cast<double>(motor->torque_),
+                        static_cast<double>(motor->temperature_),
+                        static_cast<unsigned int>(motor->error_code),
+                        static_cast<unsigned int>(motor->pattern));
+          } catch (const std::exception &e) {
+            RCLCPP_WARN(this->get_logger(),
+                        "%s: 读取初始化前状态失败，继续执行初始化: %s",
+                        motor_name.c_str(), e.what());
+          }
+
           // 第一步：失能电机并清除错误（clear_error=1）
           RCLCPP_INFO(this->get_logger(), "%s: 失能电机并清除错误...", motor_name.c_str());
-          motor->Disenable_Motor(1);
+          execute_init_command_burst([&motor]() { motor->Disenable_Motor(1); }, "失能清错");
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
           // 第二步：读取当前电机模式
-          motor->Get_RobStrite_Motor_parameter(0x7005);
+          execute_init_command_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7005); }, "读取运行模式");
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
           
           // 第三步：如果不是CSP模式（mode=5），切换到CSP模式
           if (motor->drw.run_mode.data != 5) {
             RCLCPP_INFO(this->get_logger(), "%s当前模式: %.0f, 切换到CSP模式...", 
                         motor_name.c_str(), motor->drw.run_mode.data);
-            motor->Set_RobStrite_Motor_parameter(0x7005, 5, 'j'); // 设置为CSP位置模式
+            execute_init_command_burst(
+                [&motor]() { motor->Set_RobStrite_Motor_parameter(0x7005, 5, 'j'); },
+                "设置CSP模式");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             
-            motor->Get_RobStrite_Motor_parameter(0x7005);
+            execute_init_command_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7005); }, "复读运行模式");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
           }
           
           // 第四步：使能电机
-          motor->enable_motor();
+          execute_init_command_burst([&motor]() { motor->enable_motor(); }, "电机使能");
           initialized = true;
+
+          double startup_reference_position = static_cast<double>(motor->position_);
+          try {
+            execute_init_command_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7019); }, "读取mechPos");
+            startup_reference_position = static_cast<double>(motor->drw.mechPos.data);
+          } catch (const std::exception &e) {
+            RCLCPP_WARN(this->get_logger(),
+                        "%s: 读取mechPos失败，回退到状态帧位置: %s",
+                        motor_name.c_str(), e.what());
+          }
+
+          if (motor.get() == motor1_.get()) {
+            motor1_target_position_ = startup_reference_position;
+            motor1_target_seeded_ = true;
+            motor1_last_time_valid_ = false;
+          }
+
           RCLCPP_INFO(this->get_logger(), "%s已使能（CSP位置控制模式，错误已清除）", motor_name.c_str());
           RCLCPP_INFO(this->get_logger(), "%s启动位置: %.4f rad (%.2f deg)",
-                      motor_name.c_str(), motor->position_, motor->position_ * 180.0 / M_PI);
+                      motor_name.c_str(),
+                      startup_reference_position,
+                      startup_reference_position * 180.0 / M_PI);
           if (motor1_initialized_ && motor2_initialized_ && motor1_ && motor2_) {
             RCLCPP_INFO(this->get_logger(),
                         "启动时电机位置 -> 电机1: %.4f rad (%.2f deg), 电机2: %.4f rad (%.2f deg)",
@@ -731,7 +905,9 @@ private:
       // 首次进入，用电机当前位置作为初始目标
       if (!motor1_last_time_valid_) {
         motor1_last_time_ = std::chrono::steady_clock::now();
-        motor1_target_position_ = motor1_->position_;
+        if (!motor1_target_seeded_) {
+          motor1_target_position_ = motor1_->position_;
+        }
         motor1_last_time_valid_ = true;
         return;
       }
@@ -805,36 +981,18 @@ private:
       }
 
       if (motor1_initialized_ && motor1_) {
-        update_multi_turn_position(motor1_->position_,
-                                   motor1_multi_turn_valid_,
-                                   motor1_last_raw_position_,
-                                   motor1_turn_count_,
-                                   motor1_multi_turn_position_);
-        auto actual_msg1 = std_msgs::msg::Float32();
-        actual_msg1.data = static_cast<float>(motor1_->position_);
-        motor1_actual_position_publisher_->publish(actual_msg1);
+        motor1_multi_turn_position_ = read_motor_mech_position(
+            motor1_, "电机1", motor1_multi_turn_position_);
         auto multi_turn_msg1 = std_msgs::msg::Float32();
         multi_turn_msg1.data = static_cast<float>(motor1_multi_turn_position_);
         motor1_multi_turn_position_publisher_->publish(multi_turn_msg1);
-        auto turn_count_msg1 = std_msgs::msg::Int32();
-        turn_count_msg1.data = motor1_turn_count_;
-        motor1_turn_count_publisher_->publish(turn_count_msg1);
       }
       if (motor2_initialized_ && motor2_) {
-        update_multi_turn_position(motor2_->position_,
-                                   motor2_multi_turn_valid_,
-                                   motor2_last_raw_position_,
-                                   motor2_turn_count_,
-                                   motor2_multi_turn_position_);
-        auto actual_msg2 = std_msgs::msg::Float32();
-        actual_msg2.data = static_cast<float>(motor2_->position_);
-        motor2_actual_position_publisher_->publish(actual_msg2);
+        motor2_multi_turn_position_ = read_motor_mech_position(
+            motor2_, "电机2", motor2_multi_turn_position_);
         auto multi_turn_msg2 = std_msgs::msg::Float32();
         multi_turn_msg2.data = static_cast<float>(motor2_multi_turn_position_);
         motor2_multi_turn_position_publisher_->publish(multi_turn_msg2);
-        auto turn_count_msg2 = std_msgs::msg::Int32();
-        turn_count_msg2.data = motor2_turn_count_;
-        motor2_turn_count_publisher_->publish(turn_count_msg2);
       }
 
       // 发布电机1目标位置
@@ -871,6 +1029,7 @@ private:
       motor1_initialized_ = false;
       motor2_initialized_ = false;
       motor1_last_time_valid_ = false;
+      motor1_target_seeded_ = false;
       motor2_mouse_target_valid_ = false;
     } catch (...) {
       RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
@@ -878,6 +1037,7 @@ private:
       motor1_initialized_ = false;
       motor2_initialized_ = false;
       motor1_last_time_valid_ = false;
+      motor1_target_seeded_ = false;
       motor2_mouse_target_valid_ = false;
     }
   }
@@ -965,12 +1125,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr mouse_subscription_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_target_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_target_position_publisher_;
-  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_actual_position_publisher_;
-  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_actual_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_multi_turn_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_multi_turn_position_publisher_;
-  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr motor1_turn_count_publisher_;
-  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr motor2_turn_count_publisher_;
   rclcpp::TimerBase::SharedPtr motor1_control_timer_;      ///< 电机1高频控制定时器
 
   // 电机1参数（速度积分模式）
@@ -982,11 +1138,9 @@ private:
   double motor1_control_acceleration_;     ///< CSP 加速度
   double motor1_current_velocity_{0.0};    ///< RC 回调更新的当前目标速度 rad/s
   double motor1_target_position_{0.0};     ///< 积分累加的目标位置 rad
+  bool motor1_target_seeded_{false};
   std::chrono::steady_clock::time_point motor1_last_time_; ///< 上次控制时间戳
   bool motor1_last_time_valid_{false};     ///< 时间戳是否已初始化
-  bool motor1_multi_turn_valid_{false};
-  double motor1_last_raw_position_{0.0};
-  int motor1_turn_count_{0};
   double motor1_multi_turn_position_{0.0};
 
   // 电机2参数（位置映射模式）
@@ -996,9 +1150,6 @@ private:
   int motor2_channel_index_;
   double motor2_control_speed_;
   double motor2_control_acceleration_;
-  bool motor2_multi_turn_valid_{false};
-  double motor2_last_raw_position_{0.0};
-  int motor2_turn_count_{0};
   double motor2_multi_turn_position_{0.0};
 
   // 通用参数
@@ -1052,6 +1203,13 @@ private:
   // 弹道下坠补偿参数
   double bullet_velocity_;                                          ///< 弹丸初速度 m/s
   double gravity_;                                                  ///< 重力加速度 m/s²
+  bool restart_can_on_startup_{true};                              ///< 启动时是否重启CAN接口
+  int can_bitrate_{1000000};                                       ///< CAN波特率
+  int can_restart_ms_{100};                                        ///< CAN自动恢复时间 ms
+  bool can_use_sudo_{true};                                        ///< CAN重启命令是否使用sudo
+  std::string can_sudo_password_;                                  ///< sudo密码（可选，留空则尝试免密sudo）
+  int init_command_burst_count_{3};                                ///< 初始化指令连发次数
+  int init_command_burst_interval_ms_{5};                          ///< 初始化指令连发间隔 ms
 };
 
 /**

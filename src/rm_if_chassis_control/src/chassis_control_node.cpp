@@ -32,6 +32,12 @@
  * 订阅话题：
  *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
  *   - /vt_remote/key_toggles  (std_msgs/Int16MultiArray) : [pause, fn_left, fn_right, trigger]
+ *   - motor1/multi_turn_position (std_msgs/Float32) : 云台 yaw 电机多圈角（电机侧，rad）
+ *
+ * 云台坐标系控制：
+ *   - 使用云台 yaw 多圈角 / 2.0135 作为“云台相对底盘”的角度偏移
+ *   - 偏移角为 0 时，云台 X 轴与底盘 X 轴重合
+ *   - 将遥控器/键盘给出的 vx, vy（云台坐标系）旋转到底盘坐标系后再下发
  *
  * 发布话题：
  *   - /chassis/feedback    (std_msgs/Float32MultiArray):
@@ -46,6 +52,7 @@
  *   - max_angular_vel   (double) : 最大角速度 (rad/s)，默认 10.0
  *   - min_linear_vel    (double) : 最小线速度 (m/s)，默认 0.5；当指令速度非零且小于此值时按此速度运动
  *   - deadzone     (int)    : 摇杆死区（原始值），默认 20
+ *   - gimbal_yaw_zero_offset (double) : 云台 yaw 零点偏移 (rad)，默认 0.0
  */
 
 #include <fcntl.h>
@@ -199,6 +206,8 @@ static constexpr int16_t CH_MIN = 364;
 static constexpr int16_t CH_MAX = 1684;
 /** @brief 通道半程范围 */
 static constexpr double CH_HALF_RANGE = static_cast<double>(CH_MAX - CH_CENTER);  // 660
+/** @brief 云台 yaw 电机减速比（电机侧角度 / 减速比 = 云台相对底盘角度） */
+static constexpr double GIMBAL_YAW_REDUCTION_RATIO = 2.0135;
 
 /**
  * @brief 键盘位定义（/vt_remote/keyboard）
@@ -252,6 +261,7 @@ public:
     this->declare_parameter<std::string>("fire_control_source", "hybrid");
     this->declare_parameter<double>("input_priority_timeout", 0.3);
     this->declare_parameter<int>("deadzone", 2);
+    this->declare_parameter<double>("gimbal_yaw_zero_offset", 0.0);
 
     serial_port_ = this->get_parameter("serial_port").as_string();
     baud_rate_   = this->get_parameter("baud_rate").as_int();
@@ -264,6 +274,8 @@ public:
       this->get_parameter("fire_control_source").as_string();
     input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
     deadzone_          = this->get_parameter("deadzone").as_int();
+    gimbal_yaw_zero_offset_ =
+      this->get_parameter("gimbal_yaw_zero_offset").as_double();
     fire_control_source_ = parseFireControlSource(fire_control_source);
 
     /* -------- 订阅遥控器通道 -------- */
@@ -280,6 +292,11 @@ public:
     sub_mouse_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/mouse", 10,
       std::bind(&ChassisControlNode::mouseCallback, this, std::placeholders::_1));
+
+    /* -------- 订阅云台 yaw 多圈角（用于云台坐标系控制）-------- */
+    sub_gimbal_yaw_multi_turn_ = this->create_subscription<std_msgs::msg::Float32>(
+      "motor1/multi_turn_position", 10,
+      std::bind(&ChassisControlNode::gimbalYawMultiTurnCallback, this, std::placeholders::_1));
 
     /* -------- 订阅遥控器按键切换状态 (供弹控制) -------- */
     sub_key_toggles_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
@@ -321,6 +338,9 @@ public:
     RCLCPP_INFO(this->get_logger(),
                 "发射/供弹控制输入源: %s",
                 fireControlSourceToString(fire_control_source_));
+    RCLCPP_INFO(this->get_logger(),
+                "云台坐标系参数: reduction_ratio=%.4f, yaw_zero_offset=%.4f rad",
+                GIMBAL_YAW_REDUCTION_RATIO, gimbal_yaw_zero_offset_);
   }
 
   /**
@@ -580,6 +600,18 @@ private:
   }
 
   /**
+   * @brief 云台 yaw 多圈角回调
+   * @param msg 电机侧多圈角（rad）
+   */
+  void gimbalYawMultiTurnCallback(const std_msgs::msg::Float32::SharedPtr msg)
+  {
+    std::lock_guard<std::mutex> lock(vel_mutex_);
+    gimbal_yaw_offset_rad_ =
+      -static_cast<double>(msg->data) / GIMBAL_YAW_REDUCTION_RATIO -
+      gimbal_yaw_zero_offset_;
+  }
+
+  /**
    * @brief 200Hz 控制定时器回调：发送控制帧 + 读取反馈
    */
   void controlTimerCallback()
@@ -598,6 +630,7 @@ private:
 
     /* 获取目标速度（加锁） */
     float vx, vy, vw, feed;
+    double gimbal_yaw_offset_rad;
     {
       std::lock_guard<std::mutex> lock(vel_mutex_);
 
@@ -611,6 +644,7 @@ private:
         vw   = target_vw_;
         feed = feed_rpm_;
       }
+      gimbal_yaw_offset_rad = gimbal_yaw_offset_rad_;
     }
 
     /* 最小线速度：当指令速度非零且小于 min_linear_vel 时，按 min_linear_vel 运动（保持方向） */
@@ -621,8 +655,17 @@ private:
       vy *= scale;
     }
 
+    /*
+     * @brief 云台坐标系 -> 底盘坐标系
+     * @details 角度偏移为 0 时，云台 X 与底盘 X 重合，速度向量保持不变。
+     */
+    const float cos_theta = static_cast<float>(std::cos(gimbal_yaw_offset_rad));
+    const float sin_theta = static_cast<float>(std::sin(gimbal_yaw_offset_rad));
+    const float chassis_vx = cos_theta * vx - sin_theta * vy;
+    const float chassis_vy = sin_theta * vx + cos_theta * vy;
+
     /* 发送控制帧 */
-    sendControlFrame(vx, vy, vw, feed);
+    sendControlFrame(chassis_vx, chassis_vy, vw, feed);
 
     /* 非阻塞读取反馈 */
     readFeedback();
@@ -965,6 +1008,8 @@ private:
   double min_linear_vel_{};
   /** @brief 摇杆死区（原始值单位） */
   int deadzone_{};
+  /** @brief 云台 yaw 零点偏移（rad） */
+  double gimbal_yaw_zero_offset_{};
   /** @brief 发射/供弹控制输入源 */
   FireControlSource fire_control_source_{FireControlSource::HYBRID};
   /** @brief 键鼠优先窗口时长（秒） */
@@ -991,6 +1036,8 @@ private:
   float target_vw_ = 0.0f;
   /** @brief 供弹电机目标转速 */
   float feed_rpm_ = 0.0f;
+  /** @brief 云台相对底盘 yaw 角度偏移（rad） */
+  double gimbal_yaw_offset_rad_ = 0.0;
   /** @brief 是否已收到过遥控数据 */
   bool channel_received_ = false;
 
@@ -1053,6 +1100,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr sub_keyboard_;
   /** @brief 鼠标数据订阅者 */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_mouse_;
+  /** @brief 云台 yaw 电机多圈角订阅者 */
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_gimbal_yaw_multi_turn_;
   /** @brief 遥控器按键切换状态订阅者 (供弹控制) */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
   /** @brief 反馈数据发布者 */

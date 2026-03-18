@@ -54,11 +54,15 @@ public:
         this->declare_parameter<double>("conf_threshold", 0.5);
         this->declare_parameter<double>("armor_real_width", 0.135); // 默认小装甲板宽度 135mm
         this->declare_parameter<bool>("show_image", true);          // 是否发布可视化图像
+        this->declare_parameter<double>("aim_offset_x_px", 0.0);
+        this->declare_parameter<double>("aim_offset_y_px", 0.0);
 
         std::string engine_path = this->get_parameter("engine_path").as_string();
         conf_threshold_ = this->get_parameter("conf_threshold").as_double();
         armor_real_width_ = this->get_parameter("armor_real_width").as_double();
         show_image_ = this->get_parameter("show_image").as_bool();
+        aim_offset_x_px_ = this->get_parameter("aim_offset_x_px").as_double();
+        aim_offset_y_px_ = this->get_parameter("aim_offset_y_px").as_double();
 
         // 加载 TensorRT Engine
         if (!loadEngine(engine_path)) {
@@ -222,17 +226,18 @@ private:
                 float bbox_cx = (x1 + x2) / 2.0f;
                 float bbox_cy = (y1 + y2) / 2.0f;
                 float bbox_w = std::max(1.0f, x2 - x1);
+                float aim_cx = bbox_cx + static_cast<float>(aim_offset_x_px_);
+                float aim_cy = bbox_cy + static_cast<float>(aim_offset_y_px_);
                 
                 // 计算相机坐标系下的 3D 位姿 (Pinhole模型简单估算)
                 double z = (fx * armor_real_width_) / bbox_w;
-                double x = (bbox_cx - cx) * z / fx;
-                double y = (bbox_cy - cy) * z / fy;
-                double dist = std::sqrt(x*x + y*y + z*z);
+                double x = (aim_cx - cx) * z / fx;
+                double y = (aim_cy - cy) * z / fy;
 
                 auto_aim_interfaces::msg::Armor armor;
                 armor.type = color_str;
                 armor.number = "1"; // 默认数字
-                armor.distance_to_image_center = std::sqrt(std::pow(bbox_cx - cx, 2) + std::pow(bbox_cy - cy, 2));
+                armor.distance_to_image_center = std::sqrt(std::pow(aim_cx - cx, 2) + std::pow(aim_cy - cy, 2));
                 
                 armor.pose.position.x = x;
                 armor.pose.position.y = y;
@@ -251,6 +256,7 @@ private:
                     cv::putText(img, label, cv::Point(x1, y1 - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 2);
                     // 画中心点
                     cv::circle(img, cv::Point(bbox_cx, bbox_cy), 3, cv::Scalar(0, 255, 0), -1);
+                    cv::circle(img, cv::Point(aim_cx, aim_cy), 3, cv::Scalar(0, 255, 255), -1);
                 }
             }
         }
@@ -276,6 +282,8 @@ private:
     double conf_threshold_;
     double armor_real_width_;
     bool show_image_;
+    double aim_offset_x_px_{0.0};
+    double aim_offset_y_px_{0.0};
 
     sensor_msgs::msg::CameraInfo::SharedPtr camera_info_;
 

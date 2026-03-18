@@ -25,6 +25,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 
 /**
  * @brief 云台底层电机控制节点
@@ -43,7 +44,7 @@ public:
         motor2_initialized_(false) {
 
     // 电机1 (Yaw轴) 参数
-    this->declare_parameter<std::string>("motor1_can_interface", "can0");
+    this->declare_parameter<std::string>("motor1_can_interface", "can1");
     this->declare_parameter<int>("motor1_id", 0x02);
     this->declare_parameter<double>("motor1_max_velocity", 8.0);
     this->declare_parameter<int>("motor1_control_rate", 200);
@@ -51,7 +52,7 @@ public:
     this->declare_parameter<double>("motor1_control_acceleration", 8.0);
 
     // 电机2 (Pitch轴) 参数
-    this->declare_parameter<std::string>("motor2_can_interface", "can0");
+    this->declare_parameter<std::string>("motor2_can_interface", "can1");
     this->declare_parameter<int>("motor2_id", 0x01);
     this->declare_parameter<double>("motor2_min_position", -0.21);
     this->declare_parameter<double>("motor2_max_position", 0.31);
@@ -62,14 +63,15 @@ public:
     this->declare_parameter<int>("master_id", 0xFF);
     this->declare_parameter<int>("actuator_type", 5);
 
-    // 追踪模式 Yaw 瞄准偏移校准（硬件层参数，由本节点内部应用）
-    this->declare_parameter<double>("track_yaw_offset", -0.2);
-
-    // 指令超时保护：超过此时间未收到 /gimbal/cmd 则停止 Yaw 运动
+    // 指令超时保护：超过此时间未收到 /gimbal/cmd 则停止目标更新
     this->declare_parameter<double>("cmd_timeout", 0.5);
 
     // 故障后自动重新初始化的冷却时间（s），防止快速反复重试
     this->declare_parameter<double>("recovery_cooldown", 5.0);
+    /**
+     * @brief 电机处于未就绪状态时，主动恢复触发的最小间隔（s）
+     */
+    this->declare_parameter<double>("unready_recovery_retry_interval", 1.0);
 
     /**
      * @brief 电机 socket 正常工作时的 CAN 接收超时（毫秒）
@@ -106,9 +108,10 @@ public:
     int master_id = this->get_parameter("master_id").as_int();
     int actuator_type = this->get_parameter("actuator_type").as_int();
 
-    track_yaw_offset_ = this->get_parameter("track_yaw_offset").as_double();
     cmd_timeout_ = this->get_parameter("cmd_timeout").as_double();
     recovery_cooldown_ = this->get_parameter("recovery_cooldown").as_double();
+    unready_recovery_retry_interval_ =
+        this->get_parameter("unready_recovery_retry_interval").as_double();
     motor_recv_timeout_ms_ = this->get_parameter("motor_recv_timeout_ms").as_int();
 
     restart_can_on_startup_ = this->get_parameter("restart_can_on_startup").as_bool();
@@ -143,10 +146,10 @@ public:
     RCLCPP_INFO(this->get_logger(), "  电机2(Pitch): %s ID=0x%02X, 范围=[%.2f, %.2f] rad, 速度=%.2f rad/s",
                 motor2_can_interface_.c_str(), motor2_id,
                 motor2_min_position_, motor2_max_position_, motor2_control_speed_);
-    RCLCPP_INFO(this->get_logger(), "  Yaw偏移校准: %.4f rad (%.2f°)",
-                track_yaw_offset_, track_yaw_offset_ * 180.0 / M_PI);
     RCLCPP_INFO(this->get_logger(), "  自动恢复冷却: %.1fs，CAN接收超时: %dms",
                 recovery_cooldown_, motor_recv_timeout_ms_);
+    RCLCPP_INFO(this->get_logger(), "  未就绪恢复触发间隔: %.1fs",
+                unready_recovery_retry_interval_);
 
     // 发布者：监控目标位置与多圈角
     motor1_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
@@ -338,14 +341,19 @@ private:
    */
   void init_motor(std::unique_ptr<RobStrideMotor> &motor,
                   std::atomic<bool> &initialized,
-                  const std::string &motor_name) {
+                  const std::string &motor_name,
+                  std::function<void(bool)> on_finished = {}) {
     if (!motor) {
       RCLCPP_ERROR(this->get_logger(), "%s对象未创建", motor_name.c_str());
+      if (on_finished) {
+        on_finished(false);
+      }
       return;
     }
     RCLCPP_INFO(this->get_logger(), "正在初始化%s...", motor_name.c_str());
 
-    std::thread init_thread([this, &motor, &initialized, motor_name]() {
+    std::thread init_thread([this, &motor, &initialized, motor_name,
+                             on_finished = std::move(on_finished)]() mutable {
       const int max_retries = 5;
 
       /**
@@ -457,6 +465,9 @@ private:
                      &ctrl_timeout, sizeof(ctrl_timeout));
           RCLCPP_INFO(this->get_logger(), "%s: CAN接收超时已设置为 %dms（防止控制循环阻塞）",
                       motor_name.c_str(), motor_recv_timeout_ms_);
+          if (on_finished) {
+            on_finished(true);
+          }
           return;
 
         } catch (const std::exception &e) {
@@ -471,6 +482,9 @@ private:
       RCLCPP_ERROR(this->get_logger(), "%s初始化失败（已重试%d次）", motor_name.c_str(), max_retries);
       RCLCPP_ERROR(this->get_logger(), "请检查: 1) CAN接口 2) 电机连接与上电 3) 电机ID");
       initialized = false;
+      if (on_finished) {
+        on_finished(false);
+      }
     });
     init_thread.detach();
   }
@@ -489,44 +503,34 @@ private:
    *
    * @param msg 控制指令消息
    */
+  /**
+   * @brief 控制指令消息回调，接收来自 auto_aim_node 的绝对位置指令
+   *
+   * 消息格式:
+   *   data[0]: Yaw 绝对目标位置 (rad)
+   *   data[1]: Pitch 绝对目标位置 (rad)
+   *
+   * @param msg 控制指令消息
+   */
   void gimbal_cmd_callback(const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
-    if (msg->data.size() < 3) {
+    if (msg->data.size() < 2) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                           "/gimbal/cmd 数据长度不足: %zu (需要 3)", msg->data.size());
+                           "/gimbal/cmd 数据长度不足: %zu (需要 2)", msg->data.size());
       return;
     }
 
-    bool new_tracking_mode = (msg->data[0] != 0.0);
-
-    if (new_tracking_mode && !tracking_mode_) {
-      if (motor2_initialized_ && motor2_) {
-        motor2_track_target_position_ = static_cast<double>(motor2_->position_);
-      }
-      RCLCPP_INFO(this->get_logger(), ">>> 进入追踪模式，Pitch锁定: %.4f rad",
-                  motor2_track_target_position_);
-    } else if (!new_tracking_mode && tracking_mode_) {
-      if (motor1_initialized_ && motor1_) {
-        motor1_target_position_ = static_cast<double>(motor1_->position_);
-        motor1_target_seeded_ = true;
-      }
-      RCLCPP_INFO(this->get_logger(), "<<< 退出追踪模式");
+    if (motor1_initialized_ && motor1_) {
+      motor1_target_position_ = msg->data[0];
+      motor1_target_seeded_ = true;
+    }
+    
+    if (motor2_initialized_ && motor2_) {
+      motor2_cmd_position_ = std::max(motor2_min_position_,
+                                      std::min(motor2_max_position_, msg->data[1]));
     }
 
-    tracking_mode_ = new_tracking_mode;
     last_cmd_time_ = this->now();
     cmd_received_ = true;
-
-    if (!tracking_mode_) {
-      current_yaw_velocity_ = msg->data[1];
-      motor2_cmd_position_ = std::max(motor2_min_position_,
-                                      std::min(motor2_max_position_, msg->data[2]));
-    } else {
-      motor1_target_position_ += msg->data[1];
-      motor2_track_target_position_ += msg->data[2];
-      motor2_track_target_position_ = std::max(motor2_min_position_,
-                                               std::min(motor2_max_position_,
-                                                        motor2_track_target_position_));
-    }
   }
 
   /**
@@ -566,49 +570,70 @@ private:
           recovery_timer_.reset();
           RCLCPP_WARN(this->get_logger(), "开始自动重新初始化电机...");
           restart_configured_can_interfaces();
-          init_motor(motor1_, motor1_initialized_, "电机1");
-          init_motor(motor2_, motor2_initialized_, "电机2");
-          recovery_in_progress_ = false;
+
+          recovery_jobs_total_ = 2;
+          recovery_jobs_done_ = 0;
+          recovery_jobs_success_ = 0;
+
+          auto on_job_finished = [this](bool ok) {
+            if (ok) {
+              ++recovery_jobs_success_;
+            }
+            ++recovery_jobs_done_;
+
+            if (recovery_jobs_done_ >= recovery_jobs_total_) {
+              RCLCPP_WARN(this->get_logger(),
+                          "恢复尝试结束: 成功 %d/%d（电机1=%s, 电机2=%s）",
+                          recovery_jobs_success_, recovery_jobs_total_,
+                          motor1_initialized_ ? "OK" : "FAIL",
+                          motor2_initialized_ ? "OK" : "FAIL");
+              recovery_in_progress_ = false;
+            }
+          };
+
+          init_motor(motor1_, motor1_initialized_, "电机1", on_job_finished);
+          init_motor(motor2_, motor2_initialized_, "电机2", on_job_finished);
         });
   }
 
   /**
    * @brief 高频电机控制定时器回调（默认 200Hz）
    *
-   * 普通模式: 对接收到的 Yaw 速度做时间积分得到目标位置，驱动 Pitch 到绝对目标位置。
-   * 追踪模式: 直接驱动到由 gimbal_cmd_callback 累积的目标位置；Yaw 叠加偏移校准量。
-   * 超时保护: 若超过 cmd_timeout_ 未收到指令，Yaw 速度置零。
+   * 负责将来自 auto_aim_node 的绝对目标位置直接下发给电机。
    *
    * 关键保护机制:
    *   - 电机故障检测: 周期性检查 error_code，非零时自动触发恢复。
    *   - 自动恢复: 异常后不永久停止，调用 trigger_motor_recovery() 等待冷却后重新初始化。
-   *   - Yaw 轴（电机1）不做位置偏差检测：该轴需要连续多圈旋转，target 与 actual 的
-   *     累积差值无意义，真实故障由 motor_recv_timeout_ms 超时异常检测。
+   *   - 超时保护: 超过 cmd_timeout_ 未收到指令，则保持当前目标位置不动。
    */
   void motor_control_timer_callback() {
     if (!motor1_initialized_ || !motor1_) {
+      const auto now = std::chrono::steady_clock::now();
+      if (!recovery_in_progress_) {
+        const bool can_retry =
+            !last_unready_recovery_trigger_time_valid_ ||
+            (std::chrono::duration<double>(now - last_unready_recovery_trigger_time_).count() >=
+             unready_recovery_retry_interval_);
+        if (can_retry) {
+          last_unready_recovery_trigger_time_ = now;
+          last_unready_recovery_trigger_time_valid_ = true;
+          RCLCPP_WARN(this->get_logger(), "电机未就绪，主动触发恢复流程");
+          trigger_motor_recovery();
+        }
+      }
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                            "电机未就绪%s，跳过控制指令",
                            recovery_in_progress_ ? "（自动恢复进行中）" : "（等待初始化）");
       return;
     }
 
-    try {
-      if (!motor1_last_time_valid_) {
-        motor1_last_time_ = std::chrono::steady_clock::now();
-        if (!motor1_target_seeded_) {
-          motor1_target_position_ = static_cast<double>(motor1_->position_);
-          motor1_target_seeded_ = true;
-        }
-        motor1_last_time_valid_ = true;
-        return;
-      }
+    last_unready_recovery_trigger_time_valid_ = false;
 
-      auto now = std::chrono::steady_clock::now();
-      double dt = std::chrono::duration<double>(now - motor1_last_time_).count();
-      motor1_last_time_ = now;
-      if (dt > 0.05) {
-        dt = 0.05;
+    try {
+      if (!motor1_target_seeded_) {
+        motor1_target_position_ = static_cast<double>(motor1_->position_);
+        motor1_target_seeded_ = true;
+        return;
       }
 
       // ── 电机故障码周期性检查（每 3 秒检测一次）──────────────────────────────
@@ -620,7 +645,6 @@ private:
                        "电机1 故障码 0x%02X，触发自动恢复", motor1_->error_code);
           motor1_initialized_ = false;
           motor2_initialized_ = false;
-          motor1_last_time_valid_ = false;
           motor1_target_seeded_ = false;
           trigger_motor_recovery();
           return;
@@ -630,7 +654,6 @@ private:
                        "电机2 故障码 0x%02X，触发自动恢复", motor2_->error_code);
           motor1_initialized_ = false;
           motor2_initialized_ = false;
-          motor1_last_time_valid_ = false;
           motor1_target_seeded_ = false;
           trigger_motor_recovery();
           return;
@@ -640,33 +663,19 @@ private:
       const bool cmd_active = cmd_received_ &&
           ((this->now() - last_cmd_time_).seconds() <= cmd_timeout_);
 
-      if (!tracking_mode_) {
-        double yaw_vel = cmd_active ? current_yaw_velocity_ : 0.0;
-        motor1_target_position_ += yaw_vel * dt;
+      if (!cmd_active) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "/gimbal/cmd 指令超时，保持当前位置");
       }
-      // 追踪模式下 motor1_target_position_ 已由 gimbal_cmd_callback 累积
 
       // ── 下发电机指令 ──────────────────────────────────────────────────────────
-      if (!tracking_mode_) {
-        motor1_->RobStrite_Motor_PosCSP_control(motor1_control_speed_, motor1_target_position_);
+      motor1_->RobStrite_Motor_PosCSP_control(motor1_control_speed_, motor1_target_position_);
 
-        if (motor2_initialized_ && motor2_) {
-          motor2_->RobStrite_Motor_PosCSP_control(motor2_control_speed_, motor2_cmd_position_);
-          auto msg2 = std_msgs::msg::Float32();
-          msg2.data = static_cast<float>(motor2_cmd_position_);
-          motor2_target_position_publisher_->publish(msg2);
-        }
-      } else {
-        double yaw_cmd = motor1_target_position_ + track_yaw_offset_;
-        motor1_->RobStrite_Motor_PosCSP_control(motor1_control_speed_, yaw_cmd);
-
-        if (motor2_initialized_ && motor2_) {
-          motor2_->RobStrite_Motor_PosCSP_control(motor2_control_speed_,
-                                                   motor2_track_target_position_);
-          auto msg2 = std_msgs::msg::Float32();
-          msg2.data = static_cast<float>(motor2_track_target_position_);
-          motor2_target_position_publisher_->publish(msg2);
-        }
+      if (motor2_initialized_ && motor2_) {
+        motor2_->RobStrite_Motor_PosCSP_control(motor2_control_speed_, motor2_cmd_position_);
+        auto msg2 = std_msgs::msg::Float32();
+        msg2.data = static_cast<float>(motor2_cmd_position_);
+        motor2_target_position_publisher_->publish(msg2);
       }
 
       // 发布电机1目标位置
@@ -694,23 +703,12 @@ private:
       static int log_counter = 0;
       if (++log_counter >= motor1_control_rate_) {
         double pos_err = motor1_target_position_ - static_cast<double>(motor1_->position_);
-        if (tracking_mode_) {
-          RCLCPP_INFO(this->get_logger(),
-                      "电机1(追踪@%dHz): 目标=%.4f rad, 实际=%.4f rad, 偏差=%.3f rad | "
-                      "电机2: 目标=%.4f rad, 实际=%.4f rad",
-                      motor1_control_rate_,
-                      motor1_target_position_, static_cast<double>(motor1_->position_), pos_err,
-                      motor2_track_target_position_,
-                      motor2_ ? static_cast<double>(motor2_->position_) : 0.0);
-        } else {
-          RCLCPP_INFO(this->get_logger(),
-                      "电机1(速度积分@%dHz): 速度=%.4f rad/s, 目标=%.4f rad, 实际=%.4f rad, 偏差=%.3f rad",
-                      motor1_control_rate_,
-                      current_yaw_velocity_,
-                      motor1_target_position_,
-                      static_cast<double>(motor1_->position_),
-                      pos_err);
-        }
+        RCLCPP_INFO(this->get_logger(),
+                    "电机1(控制@%dHz): 目标=%.4f rad, 实际=%.4f rad, 偏差=%.3f rad",
+                    motor1_control_rate_,
+                    motor1_target_position_,
+                    static_cast<double>(motor1_->position_),
+                    pos_err);
         log_counter = 0;
       }
 
@@ -718,14 +716,12 @@ private:
       RCLCPP_ERROR(this->get_logger(), "电机控制异常: %s", e.what());
       motor1_initialized_ = false;
       motor2_initialized_ = false;
-      motor1_last_time_valid_ = false;
       motor1_target_seeded_ = false;
       trigger_motor_recovery();
     } catch (...) {
       RCLCPP_ERROR(this->get_logger(), "电机控制发生未知异常");
       motor1_initialized_ = false;
       motor2_initialized_ = false;
-      motor1_last_time_valid_ = false;
       motor1_target_seeded_ = false;
       trigger_motor_recovery();
     }
@@ -763,14 +759,10 @@ private:
   double motor2_max_position_;
   double motor2_control_speed_;
   double motor2_control_acceleration_;
-  double motor2_cmd_position_{0.0};            ///< 普通模式下 Pitch 目标位置 rad
-  double motor2_track_target_position_{0.0};   ///< 追踪模式下 Pitch 目标位置 rad（从实际位置播种）
+  double motor2_cmd_position_{0.0};            ///< Pitch 目标位置 rad
   double motor2_multi_turn_position_{0.0};
 
   // ===== 控制状态（来自 /gimbal/cmd） =====
-  bool tracking_mode_{false};                  ///< 当前是否处于追踪模式
-  double current_yaw_velocity_{0.0};           ///< 普通模式 Yaw 速度指令 rad/s
-
   // ===== 指令超时保护 =====
   rclcpp::Time last_cmd_time_;
   bool cmd_received_{false};
@@ -781,10 +773,16 @@ private:
 
   // ===== 自动恢复 =====
   double recovery_cooldown_;                                   ///< 故障恢复冷却时间 s
+  double unready_recovery_retry_interval_;                     ///< 未就绪时主动恢复触发的最小间隔 s
   int motor_recv_timeout_ms_;                                  ///< 控制阶段 CAN socket 接收超时 ms
   bool recovery_in_progress_{false};                          ///< 是否正在等待恢复
   std::chrono::steady_clock::time_point last_recovery_time_;  ///< 上次触发恢复的时间
   bool last_recovery_time_valid_{false};                      ///< 上次恢复时间是否有效
+  std::chrono::steady_clock::time_point last_unready_recovery_trigger_time_;  ///< 上次未就绪恢复触发时间
+  bool last_unready_recovery_trigger_time_valid_{false};                     ///< 未就绪恢复触发时间是否有效
+  int recovery_jobs_total_{0};                                                ///< 当前恢复批次任务总数
+  int recovery_jobs_done_{0};                                                 ///< 当前恢复批次已完成任务数
+  int recovery_jobs_success_{0};                                              ///< 当前恢复批次成功任务数
 
   // ===== CAN 管理参数 =====
   bool restart_can_on_startup_;

@@ -21,12 +21,67 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
+#include <std_msgs/msg/float32.hpp>
+#include <std_msgs/msg/u_int16.hpp>
 #include <chrono>
 #include <cmath>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+/**
+ * @brief 单轴匀速运动卡尔曼滤波器
+ *
+ * 状态量: x = [θ, ω]
+ *   θ — 角度 (rad)
+ *   ω — 角速度 (rad/s)
+ * 观测量: z = θ
+ * 状态转移: θ(k+1) = θ(k) + ω(k)*dt, ω(k+1) = ω(k)
+ * 过程噪声 Q = diag(q_angle, q_vel)
+ * 观测噪声 R = r
+ */
+struct KalmanAngle {
+  double angle{0.0};    ///< 角度估计
+  double velocity{0.0}; ///< 角速度估计
+  double P00{1.0}, P01{0.0};
+  double P10{0.0}, P11{1.0};
+
+  /** @brief 用初始角度重置状态（速度归零，协方差复位） */
+  void reset(double init_angle) {
+    angle    = init_angle;
+    velocity = 0.0;
+    P00 = 1.0; P01 = 0.0;
+    P10 = 0.0; P11 = 1.0;
+  }
+
+  /** @brief 预测步骤 */
+  void predict(double dt, double q_angle, double q_vel) {
+    angle += velocity * dt;
+    double p00 = P00 + dt * (P10 + P01 + dt * P11) + q_angle;
+    double p01 = P01 + dt * P11;
+    double p10 = P10 + dt * P11;
+    double p11 = P11 + q_vel;
+    P00 = p00; P01 = p01;
+    P10 = p10; P11 = p11;
+  }
+
+  /** @brief 更新步骤（观测为角度值） */
+  void update(double z, double r) {
+    double S  = P00 + r;
+    double K0 = P00 / S;
+    double K1 = P10 / S;
+    double innov = z - angle;
+    angle    += K0 * innov;
+    velocity += K1 * innov;
+    double p00 = (1.0 - K0) * P00;
+    double p01 = (1.0 - K0) * P01;
+    double p10 = P10 - K1 * P00;
+    double p11 = P11 - K1 * P01;
+    P00 = p00; P01 = p01;
+    P10 = p10; P11 = p11;
+  }
+};
 
 /**
  * @brief 云台输入源模式
@@ -78,13 +133,21 @@ public:
     this->declare_parameter<double>("track_pitch_ki", -0.2);
     this->declare_parameter<double>("track_exit_timeout", 0.5);
 
-    // Yaw 速度预测前馈参数
-    this->declare_parameter<double>("track_yaw_ff_gain", 2.0);
-    this->declare_parameter<double>("track_yaw_ff_filter", 0.2);
-    this->declare_parameter<double>("track_yaw_ff_deadzone", 0.1);
+    // 卡尔曼滤波参数
+    this->declare_parameter<double>("kf_q_angle",   0.01);  ///< 角度过程噪声
+    this->declare_parameter<double>("kf_q_velocity", 1.0);  ///< 角速度过程噪声
+    this->declare_parameter<double>("kf_r_yaw",     0.005); ///< Yaw 观测噪声
+    this->declare_parameter<double>("kf_r_pitch",   0.005); ///< Pitch 观测噪声
+    // 目标锁定参数
+    this->declare_parameter<double>("target_match_threshold", 0.3); ///< 最大匹配角度误差 rad
+    this->declare_parameter<double>("target_lost_timeout",    0.3); ///< 目标丢失后继续预测时长 s
+
+    // 追踪模式 Yaw/Pitch 瞄准偏移校准（硬件偏差补偿）
+    this->declare_parameter<double>("track_yaw_offset", 0.0);
+    this->declare_parameter<double>("track_pitch_offset", 0.1);
 
     // 弹道下坠补偿参数
-    this->declare_parameter<double>("bullet_velocity", 20.0);
+    this->declare_parameter<double>("bullet_velocity", 10.0);
     this->declare_parameter<double>("gravity", 9.81);
 
     // 普通模式控制定时器频率
@@ -116,9 +179,15 @@ public:
     track_pitch_ki_ = this->get_parameter("track_pitch_ki").as_double();
     track_exit_timeout_ = this->get_parameter("track_exit_timeout").as_double();
 
-    track_yaw_ff_gain_ = this->get_parameter("track_yaw_ff_gain").as_double();
-    track_yaw_ff_filter_ = this->get_parameter("track_yaw_ff_filter").as_double();
-    track_yaw_ff_deadzone_ = this->get_parameter("track_yaw_ff_deadzone").as_double();
+    kf_q_angle_   = this->get_parameter("kf_q_angle").as_double();
+    kf_q_velocity_ = this->get_parameter("kf_q_velocity").as_double();
+    kf_r_yaw_     = this->get_parameter("kf_r_yaw").as_double();
+    kf_r_pitch_   = this->get_parameter("kf_r_pitch").as_double();
+    target_match_threshold_ = this->get_parameter("target_match_threshold").as_double();
+    target_lost_timeout_    = this->get_parameter("target_lost_timeout").as_double();
+
+    track_yaw_offset_ = this->get_parameter("track_yaw_offset").as_double();
+    track_pitch_offset_ = this->get_parameter("track_pitch_offset").as_double();
 
     bullet_velocity_ = this->get_parameter("bullet_velocity").as_double();
     gravity_ = this->get_parameter("gravity").as_double();
@@ -135,8 +204,12 @@ public:
     RCLCPP_INFO(this->get_logger(), "  输入源: %s", gimbal_control_source_to_string(gimbal_control_source_));
     RCLCPP_INFO(this->get_logger(), "  追踪PI: Yaw(Kp=%.2f,Ki=%.2f), Pitch(Kp=%.2f,Ki=%.2f), 退出=%.1fs",
                 track_yaw_kp_, track_yaw_ki_, track_pitch_kp_, track_pitch_ki_, track_exit_timeout_);
-    RCLCPP_INFO(this->get_logger(), "  前馈: 增益=%.2f, 滤波=%.2f, 死区=%.2f rad/s",
-                track_yaw_ff_gain_, track_yaw_ff_filter_, track_yaw_ff_deadzone_);
+    RCLCPP_INFO(this->get_logger(), "  KF: q_angle=%.4f, q_vel=%.4f, r_yaw=%.4f, r_pitch=%.4f",
+                kf_q_angle_, kf_q_velocity_, kf_r_yaw_, kf_r_pitch_);
+    RCLCPP_INFO(this->get_logger(), "  目标锁定: 匹配阈值=%.2f rad, 丢失超时=%.2f s",
+                target_match_threshold_, target_lost_timeout_);
+    RCLCPP_INFO(this->get_logger(), "  偏移校准: Yaw=%.4f rad, Pitch=%.4f rad",
+                track_yaw_offset_, track_pitch_offset_);
     RCLCPP_INFO(this->get_logger(), "  弹道补偿: 弹速=%.1f m/s, 重力=%.2f m/s²",
                 bullet_velocity_, gravity_);
 
@@ -161,13 +234,32 @@ public:
         "/vt_remote/switches", qos,
         std::bind(&AutoAimNode::switches_callback, this, std::placeholders::_1));
 
+    // 订阅键盘位图（mouse 模式使用 C 键长按触发追踪）
+    keyboard_subscription_ = this->create_subscription<std_msgs::msg::UInt16>(
+        "/vt_remote/keyboard", qos,
+        std::bind(&AutoAimNode::keyboard_callback, this, std::placeholders::_1));
+
     // 订阅装甲板检测结果（追踪模式 PI 控制输入）
     armors_subscription_ = this->create_subscription<auto_aim_interfaces::msg::Armors>(
         "/detector/armors",
         rclcpp::SensorDataQoS(),
         std::bind(&AutoAimNode::armors_callback, this, std::placeholders::_1));
 
-    // 普通模式控制定时器（鼠标速度积分 + /gimbal/cmd 发布）
+    // 订阅电机实际位置
+    motor1_pos_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+        "/motor1/multi_turn_position", 10,
+        [this](const std_msgs::msg::Float32::SharedPtr msg) {
+          motor1_actual_position_ = msg->data;
+          motor1_actual_valid_ = true;
+        });
+    motor2_pos_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+        "/motor2/multi_turn_position", 10,
+        [this](const std_msgs::msg::Float32::SharedPtr msg) {
+          motor2_actual_position_ = msg->data;
+          motor2_actual_valid_ = true;
+        });
+
+    // 控制定时器（位置积分 + /gimbal/cmd 发布）
     int period_ms = 1000 / control_rate;
     control_timer_ = this->create_wall_timer(
         std::chrono::milliseconds(period_ms),
@@ -238,24 +330,17 @@ private:
   }
 
   /**
-   * @brief 发布 /gimbal/cmd 普通模式指令
-   * @param yaw_velocity Yaw 速度 rad/s
-   * @param pitch_position Pitch 绝对目标位置 rad
+   * @brief 发布 /gimbal/cmd 绝对位置指令
    */
-  void publish_normal_cmd(double yaw_velocity, double pitch_position) {
+  void publish_cmd() {
     auto msg = std_msgs::msg::Float64MultiArray();
-    msg.data = {0.0, yaw_velocity, pitch_position};
-    gimbal_cmd_publisher_->publish(msg);
-  }
-
-  /**
-   * @brief 发布 /gimbal/cmd 追踪模式指令（增量）
-   * @param yaw_delta Yaw 位置增量 rad
-   * @param pitch_delta Pitch 位置增量 rad
-   */
-  void publish_tracking_cmd(double yaw_delta, double pitch_delta) {
-    auto msg = std_msgs::msg::Float64MultiArray();
-    msg.data = {1.0, yaw_delta, pitch_delta};
+    double yaw_cmd = motor1_target_position_;
+    double pitch_cmd = motor2_target_position_;
+    if (tracking_mode_) {
+      yaw_cmd += track_yaw_offset_;
+      pitch_cmd += track_pitch_offset_;
+    }
+    msg.data = {yaw_cmd, pitch_cmd};
     gimbal_cmd_publisher_->publish(msg);
   }
 
@@ -299,32 +384,25 @@ private:
   }
 
   /**
-   * @brief 开关消息回调，处理追踪模式的进入/退出
-   *
-   * 消息格式: [mode, pause, fn_left, fn_right, trigger]
-   *   trigger (index 4): 0=松开, 1=按下
-   *   按下立即进入追踪模式；松开超过 track_exit_timeout_ 后退出
-   *
-   * @param msg /vt_remote/switches 消息
+   * @brief 根据“追踪触发键是否按下”处理追踪模式进入/退出
+   * @param pressed 当前触发键是否按下
    */
-  void switches_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
-    if (msg->data.size() < 5) {
-      return;
-    }
-
-    bool trigger_pressed = (msg->data[4] != 0);
-
-    if (trigger_pressed) {
+  void handle_track_button_state(bool pressed) {
+    if (pressed) {
       if (!tracking_mode_) {
         tracking_mode_ = true;
-        track_yaw_error_prev_ = 0.0;
-        track_pitch_error_prev_ = 0.0;
-        yaw_angular_velocity_filtered_ = 0.0;
-        yaw_ff_prev_ = 0.0;
-        track_armors_time_valid_ = false;
+        // 重置卡尔曼滤波器和 PI 状态，等待 armors_callback 重新锁定
+        kf_initialized_            = false;
+        kf_time_valid_             = false;
+        kf_target_lost_            = false;
+        kf_target_lost_time_valid_ = false;
+        track_yaw_error_prev_      = 0.0;
+        track_pitch_error_prev_    = 0.0;
         RCLCPP_INFO(this->get_logger(), ">>> 进入追踪模式");
-        // 立即通知 gimbal_control_node 切换模式（触发 Pitch 播种）
-        publish_tracking_cmd(0.0, 0.0);
+        // 立即更新播种位置
+        if (motor1_actual_valid_) motor1_target_position_ = motor1_actual_position_;
+        if (motor2_actual_valid_) motor2_target_position_ = motor2_actual_position_;
+        publish_cmd();
       }
       trigger_release_time_valid_ = false;
     } else {
@@ -336,10 +414,14 @@ private:
           double elapsed = std::chrono::duration<double>(
               std::chrono::steady_clock::now() - trigger_release_time_).count();
           if (elapsed > track_exit_timeout_) {
-            tracking_mode_ = false;
-            motor2_mouse_target_valid_ = false;
+            tracking_mode_    = false;
+            kf_initialized_   = false;
+            kf_time_valid_    = false;
+            kf_target_lost_   = false;
             RCLCPP_INFO(this->get_logger(), "<<< 退出追踪模式 (松开 %.1fs)", track_exit_timeout_);
-            // control_timer_ 将自动以普通模式发布下一条指令
+            // 退出时更新播种位置，以防积分跳变
+            if (motor1_actual_valid_) motor1_target_position_ = motor1_actual_position_;
+            if (motor2_actual_valid_) motor2_target_position_ = motor2_actual_position_;
           }
         }
       }
@@ -347,124 +429,226 @@ private:
   }
 
   /**
-   * @brief 装甲板检测结果回调，追踪模式下执行增量式 PI + 速度预测前馈控制
+   * @brief 按输入源模式计算当前追踪触发状态
+   * @return true 表示“追踪触发键按下”
+   */
+  bool get_track_button_pressed() const {
+    switch (gimbal_control_source_) {
+      case GimbalControlSource::REMOTE:
+        return trigger_pressed_;
+      case GimbalControlSource::MOUSE:
+        return keyboard_c_pressed_;
+      case GimbalControlSource::HYBRID:
+      default:
+        return trigger_pressed_ || keyboard_c_pressed_;
+    }
+  }
+
+  /**
+   * @brief 键盘位图回调，读取 C 键状态
    *
-   * 控制律:
-   *   Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)  （增量式PI）
-   *   Pitch 融合弹道下坠补偿: pitch_error = atan2(y,z) - drop_compensation
-   *   Yaw 前馈: yaw_ff = filtered_angular_velocity × t_flight × ff_gain
+   * C 键位: bit13 (1 << 13)
+   * @param msg /vt_remote/keyboard 消息
+   */
+  void keyboard_callback(const std_msgs::msg::UInt16::SharedPtr msg) {
+    keyboard_c_pressed_ = ((msg->data & (1u << 13)) != 0u);
+    handle_track_button_state(get_track_button_pressed());
+  }
+
+  /**
+   * @brief 开关消息回调，处理 trigger 状态并驱动追踪模式进入/退出
    *
-   * @param msg /detector/armors 消息（装甲板位姿，相机坐标系 x=右/y=下/z=前）
+   * 消息格式: [mode, pause, fn_left, fn_right, trigger]
+   *   trigger (index 4): 0=松开, 1=按下
+   *   remote 模式下：trigger 为追踪触发键
+   *
+   * @param msg /vt_remote/switches 消息
+   */
+  void switches_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
+    if (msg->data.size() < 5) {
+      return;
+    }
+    trigger_pressed_ = (msg->data[4] != 0);
+    handle_track_button_state(get_track_button_pressed());
+  }
+
+  /**
+   * @brief 在候选装甲板中寻找与卡尔曼预测位置最接近的目标
+   *
+   * 遍历所有有效装甲板，计算测量角度与预测角度的欧式距离，
+   * 返回角度误差最小且小于 target_match_threshold_ 的装甲板指针。
+   * 若无匹配则返回 nullptr。
+   *
+   * @param armors 本帧检测到的装甲板列表
+   * @return 匹配到的装甲板指针，未匹配为 nullptr
+   */
+  const auto_aim_interfaces::msg::Armor* find_matching_armor(
+      const std::vector<auto_aim_interfaces::msg::Armor>& armors)
+  {
+    const auto_aim_interfaces::msg::Armor* best = nullptr;
+    double best_err = target_match_threshold_;
+    for (const auto& a : armors) {
+      if (a.pose.position.z < 0.01) continue;
+      double yaw_meas   = std::atan2(a.pose.position.x, a.pose.position.z);
+      double pitch_meas = std::atan2(a.pose.position.y, a.pose.position.z);
+      double err = std::hypot(yaw_meas - kf_yaw_.angle, pitch_meas - kf_pitch_.angle);
+      if (err < best_err) {
+        best_err = err;
+        best = &a;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * @brief 装甲板检测结果回调
+   *
+   * 控制流程：
+   *   1. KF 首次初始化 — 锁定距图像中心最近的装甲板
+   *   2. 每帧做 KF 预测步骤（匀速外推）
+   *   3. 若找到匹配目标 → KF 更新；目标丢失 → 仅用预测值，计时
+   *   4. 丢失超过 target_lost_timeout_ → 重置 KF，等待下次锁定
+   *   5. 控制误差 = KF 滤波角度 + 角速度 × 飞行时间（飞行预测）
+   *      + 弹道下坠补偿（Pitch）
+   *   6. 增量式 PI 将误差累加到目标位置
+   *
+   * @param msg /detector/armors 消息（相机坐标系 x=右/y=下/z=前）
    */
   void armors_callback(const auto_aim_interfaces::msg::Armors::SharedPtr msg) {
     if (!tracking_mode_) {
       return;
     }
-    if (msg->armors.empty()) {
+
+    auto now = std::chrono::steady_clock::now();
+
+    // ── 计算时间步长 ─────────────────────────────────────────────────
+    double dt = 0.0;
+    if (kf_time_valid_) {
+      dt = std::chrono::duration<double>(now - kf_last_time_).count();
+      if (dt > 0.5) {
+        dt = 0.0;  // 间隔过大视为断续，放弃本次预测
+      }
+    }
+    kf_last_time_ = now;
+    kf_time_valid_ = true;
+
+    // ── KF 未初始化：从最近目标播种 ─────────────────────────────────
+    if (!kf_initialized_) {
+      if (msg->armors.empty()) return;
+      // 选距图像中心最近的装甲板作为初始锁定目标
+      const auto* seed = &msg->armors[0];
+      for (size_t i = 1; i < msg->armors.size(); ++i) {
+        if (msg->armors[i].distance_to_image_center < seed->distance_to_image_center) {
+          seed = &msg->armors[i];
+        }
+      }
+      if (seed->pose.position.z < 0.01) return;
+      kf_yaw_.reset(std::atan2(seed->pose.position.x, seed->pose.position.z));
+      kf_pitch_.reset(std::atan2(seed->pose.position.y, seed->pose.position.z));
+      kf_last_distance_ = std::sqrt(
+          seed->pose.position.x * seed->pose.position.x +
+          seed->pose.position.y * seed->pose.position.y +
+          seed->pose.position.z * seed->pose.position.z);
+      // 用初始角度播种 prev_error，避免首帧 P 项激增
+      track_yaw_error_prev_   = std::atan2(seed->pose.position.x, seed->pose.position.z);
+      track_pitch_error_prev_ = std::atan2(seed->pose.position.y, seed->pose.position.z);
+      kf_initialized_ = true;
+      kf_target_lost_ = false;
+      RCLCPP_INFO(this->get_logger(), "[追踪] 锁定目标, 距离=%.2fm, yaw0=%.1f° pitch0=%.1f°",
+                  kf_last_distance_,
+                  track_yaw_error_prev_   * 180.0 / M_PI,
+                  track_pitch_error_prev_ * 180.0 / M_PI);
       return;
     }
 
-    // 选择距图像中心最近的装甲板
-    const auto *best = &msg->armors[0];
-    for (size_t i = 1; i < msg->armors.size(); ++i) {
-      if (msg->armors[i].distance_to_image_center < best->distance_to_image_center) {
-        best = &msg->armors[i];
-      }
+    // ── KF 预测步骤（每帧都做） ──────────────────────────────────────
+    if (dt > 0.001) {
+      kf_yaw_.predict(dt,   kf_q_angle_, kf_q_velocity_);
+      kf_pitch_.predict(dt, kf_q_angle_, kf_q_velocity_);
     }
 
-    double x = best->pose.position.x;
-    double y = best->pose.position.y;
-    double z = best->pose.position.z;
-
-    if (z < 0.01) {
+    // ── 寻找匹配目标并更新 KF ────────────────────────────────────────
+    const auto* matched = find_matching_armor(msg->armors);
+    if (matched) {
+      double x = matched->pose.position.x;
+      double y = matched->pose.position.y;
+      double z = matched->pose.position.z;
+      kf_yaw_.update(std::atan2(x, z),   kf_r_yaw_);
+      kf_pitch_.update(std::atan2(y, z), kf_r_pitch_);
+      kf_last_distance_ = std::sqrt(x * x + y * y + z * z);
+      kf_target_lost_        = false;
+      kf_target_lost_time_valid_ = false;
+    } else {
+      // 目标本帧未找到
+      if (!kf_target_lost_) {
+        kf_target_lost_      = true;
+        kf_target_lost_time_ = now;
+        kf_target_lost_time_valid_ = true;
+      }
+      double lost_elapsed = std::chrono::duration<double>(
+          now - kf_target_lost_time_).count();
+      if (lost_elapsed > target_lost_timeout_) {
+        // 超出预测窗口，重置锁定
+        kf_initialized_ = false;
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                             "[追踪] 目标丢失超过 %.2fs，等待重新锁定", target_lost_timeout_);
+        return;
+      }
+      // PREDICT 期间：仅保持当前目标位置，不运行 PI，防止对外推误差积分跑飞
+      // 更新 prev_error 以避免目标重新出现时产生 P 项激增
+      double distance_p  = kf_last_distance_;
+      double t_flight_p  = distance_p / bullet_velocity_;
+      double drop_comp_p = std::atan2(0.5 * gravity_ * t_flight_p * t_flight_p, distance_p);
+      track_yaw_error_prev_   = kf_yaw_.angle   + kf_yaw_.velocity   * t_flight_p;
+      track_pitch_error_prev_ = kf_pitch_.angle - drop_comp_p;
       return;
     }
 
-    // 弹道下坠补偿: t=d/v0, Δh=½gt², θ_comp=atan(Δh/d)
-    double distance = std::sqrt(x * x + y * y + z * z);
-    double t_flight = distance / bullet_velocity_;
-    double bullet_drop = 0.5 * gravity_ * t_flight * t_flight;
-    double drop_compensation = std::atan2(bullet_drop, distance);
+    // ── 弹道下坠补偿 ─────────────────────────────────────────────────
+    double distance = kf_last_distance_;
+    double t_flight  = distance / bullet_velocity_;
+    double drop_comp = std::atan2(0.5 * gravity_ * t_flight * t_flight, distance);
 
-    double yaw_error = std::atan2(x, z);
+    // ── 控制误差 = KF滤波角度 + 角速度×飞行时间（飞行预测） ──────────
+    double yaw_error   = kf_yaw_.angle   + kf_yaw_.velocity   * t_flight;
+    double pitch_error = kf_pitch_.angle - drop_comp;
 
-    /**
-     * @brief Pitch 误差融合弹道补偿
-     *
-     * pitch_error = atan2(y,z) - drop_compensation
-     * PI 控制器驱动枪口抬高，使弹丸下落后命中目标。
-     */
-    double pitch_error = std::atan2(y, z) - drop_compensation;
-
-    /**
-     * @brief Yaw 速度预测前馈
-     *
-     * 通过目标 Yaw 角速度估计弹丸飞行期间的目标位移，以增量式方式施加前馈，
-     * 角速度经过一阶低通滤波器平滑以抑制检测噪声。
-     */
-    auto armors_now = std::chrono::steady_clock::now();
-    double yaw_angular_velocity = 0.0;
-    if (track_armors_time_valid_) {
-      double armors_dt = std::chrono::duration<double>(
-          armors_now - track_armors_last_time_).count();
-      if (armors_dt > 0.001 && armors_dt < 0.5) {
-        yaw_angular_velocity = (yaw_error - track_yaw_error_prev_) / armors_dt;
-      }
-    }
-    track_armors_last_time_ = armors_now;
-    track_armors_time_valid_ = true;
-
-    if (std::abs(yaw_angular_velocity) < track_yaw_ff_deadzone_) {
-      yaw_angular_velocity = 0.0;
-    }
-
-    yaw_angular_velocity_filtered_ = track_yaw_ff_filter_ * yaw_angular_velocity
-                                   + (1.0 - track_yaw_ff_filter_) * yaw_angular_velocity_filtered_;
-
-    // 增量式PI: Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)
-    double yaw_delta = track_yaw_kp_ * (yaw_error - track_yaw_error_prev_)
-                     + track_yaw_ki_ * yaw_error;
+    // ── 增量式 PI: Δu = Kp*[e(k)-e(k-1)] + Ki*e(k) ──────────────────
+    double yaw_delta = track_yaw_kp_   * (yaw_error   - track_yaw_error_prev_)
+                     + track_yaw_ki_   *  yaw_error;
     track_yaw_error_prev_ = yaw_error;
 
     double pitch_delta = track_pitch_kp_ * (pitch_error - track_pitch_error_prev_)
-                       + track_pitch_ki_ * pitch_error;
+                       + track_pitch_ki_ *  pitch_error;
     track_pitch_error_prev_ = pitch_error;
 
-    // 速度预测前馈增量
-    double yaw_ff_new = yaw_angular_velocity_filtered_ * t_flight * track_yaw_ff_gain_;
-    double yaw_ff_delta = yaw_ff_new - yaw_ff_prev_;
-    yaw_ff_prev_ = yaw_ff_new;
+    motor1_target_position_ += yaw_delta;
+    motor2_target_position_ += pitch_delta;
+    motor2_target_position_ = std::max(motor2_min_position_,
+                                       std::min(motor2_max_position_, motor2_target_position_));
 
-    publish_tracking_cmd(yaw_delta + yaw_ff_delta, pitch_delta);
-
-    // 降频日志
+    // ── 降频日志 ─────────────────────────────────────────────────────
     static int track_log_counter = 0;
     if (++track_log_counter >= 30) {
       RCLCPP_INFO(this->get_logger(),
-                  "[追踪] 距离=%.2fm, 误差: yaw=%.2f° pitch=%.2f°, "
-                  "弹道补偿=%.2f°, Yaw角速度=%.1f°/s 前馈=%.2f°",
-                  distance,
-                  yaw_error * 180.0 / M_PI,
+                  "[追踪] d=%.2fm t_fl=%.3fs | "
+                  "yaw_err=%.2f°(vel=%.1f°/s) pitch_err=%.2f° drop=%.2f° | %s",
+                  distance, t_flight,
+                  yaw_error   * 180.0 / M_PI,
+                  kf_yaw_.velocity * 180.0 / M_PI,
                   pitch_error * 180.0 / M_PI,
-                  drop_compensation * 180.0 / M_PI,
-                  yaw_angular_velocity_filtered_ * 180.0 / M_PI,
-                  yaw_ff_new * 180.0 / M_PI);
+                  drop_comp   * 180.0 / M_PI,
+                  kf_target_lost_ ? "PREDICT" : "TRACK");
       track_log_counter = 0;
     }
   }
 
   /**
-   * @brief 普通模式控制定时器回调（默认 200Hz）
+   * @brief 控制定时器回调（默认 200Hz）
    *
-   * 融合鼠标与遥控器输入，计算 Yaw 速度和 Pitch 目标位置，
-   * 发布 /gimbal/cmd 普通模式指令。
-   * 追踪模式下跳过（由 armors_callback 负责发布）。
+   * 负责维护目标位置积分，发布 /gimbal/cmd 绝对位置指令。
    */
   void control_timer_callback() {
-    if (tracking_mode_) {
-      return;
-    }
-
     auto now = this->now();
     auto now_steady = std::chrono::steady_clock::now();
 
@@ -480,47 +664,53 @@ private:
       dt = 0.05;
     }
 
-    const bool mouse_valid = mouse_time_valid_ &&
-        ((now - last_mouse_time_).seconds() <= input_priority_timeout_);
-    const bool use_mouse_yaw =
-        (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-        ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid && mouse_x_ != 0);
-    const bool use_mouse_pitch =
-        (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-        ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
-
-    // 计算 Yaw 速度指令
-    double yaw_velocity = 0.0;
-    if (use_mouse_yaw) {
-      yaw_velocity = static_cast<double>(mouse_x_) * mouse_yaw_sensitivity_;
-      yaw_velocity = std::max(-motor1_max_velocity_, std::min(motor1_max_velocity_, yaw_velocity));
-    } else if (rc_data_valid_) {
-      yaw_velocity = map_rc_to_velocity(latest_rc_[motor1_channel_index_], motor1_max_velocity_);
+    if (!motor1_actual_valid_ || !motor2_actual_valid_) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "等待电机实际位置反馈...");
+      return;
     }
 
-    // 计算 Pitch 目标位置
-    if (use_mouse_pitch) {
-      if (!motor2_mouse_target_valid_) {
-        // 首次进入鼠标模式：以遥控器当前映射位置为起始点
-        if (rc_data_valid_) {
-          motor2_mouse_target_ = map_rc_to_pos(
-              latest_rc_[motor2_channel_index_], motor2_min_position_, motor2_max_position_);
-        }
-        motor2_mouse_target_valid_ = true;
+    if (!motor1_target_seeded_) {
+      motor1_target_position_ = motor1_actual_position_;
+      motor2_target_position_ = motor2_actual_position_;
+      motor1_target_seeded_ = true;
+      return;
+    }
+
+    if (!tracking_mode_) {
+      const bool mouse_valid = mouse_time_valid_ &&
+          ((now - last_mouse_time_).seconds() <= input_priority_timeout_);
+      const bool use_mouse_yaw =
+          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
+          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid && mouse_x_ != 0);
+      const bool use_mouse_pitch =
+          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
+          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
+
+      // 计算 Yaw 速度并积分
+      double yaw_velocity = 0.0;
+      if (use_mouse_yaw) {
+        yaw_velocity = static_cast<double>(mouse_x_) * mouse_yaw_sensitivity_;
+        yaw_velocity = std::max(-motor1_max_velocity_, std::min(motor1_max_velocity_, yaw_velocity));
+      } else if (rc_data_valid_) {
+        yaw_velocity = map_rc_to_velocity(latest_rc_[motor1_channel_index_], motor1_max_velocity_);
       }
-      double pitch_vel = static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
-      pitch_vel = std::max(-motor2_control_speed_, std::min(motor2_control_speed_, pitch_vel));
-      motor2_mouse_target_ += pitch_vel * dt;
-      motor2_mouse_target_ = std::max(motor2_min_position_,
-                                      std::min(motor2_max_position_, motor2_mouse_target_));
-      motor2_cmd_position_ = motor2_mouse_target_;
-    } else if (rc_data_valid_) {
-      motor2_cmd_position_ = map_rc_to_pos(
-          latest_rc_[motor2_channel_index_], motor2_min_position_, motor2_max_position_);
-      motor2_mouse_target_valid_ = false;
+      motor1_target_position_ += yaw_velocity * dt;
+
+      // 计算 Pitch 目标位置
+      if (use_mouse_pitch) {
+        double pitch_vel = static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
+        pitch_vel = std::max(-motor2_control_speed_, std::min(motor2_control_speed_, pitch_vel));
+        motor2_target_position_ += pitch_vel * dt;
+        motor2_target_position_ = std::max(motor2_min_position_,
+                                           std::min(motor2_max_position_, motor2_target_position_));
+      } else if (rc_data_valid_) {
+        motor2_target_position_ = map_rc_to_pos(
+            latest_rc_[motor2_channel_index_], motor2_min_position_, motor2_max_position_);
+      }
     }
 
-    publish_normal_cmd(yaw_velocity, motor2_cmd_position_);
+    publish_cmd();
   }
 
   // ===== ROS 通信 =====
@@ -528,7 +718,10 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr rc_subscription_;
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr mouse_subscription_;
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr switches_subscription_;
+  rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr keyboard_subscription_;
   rclcpp::Subscription<auto_aim_interfaces::msg::Armors>::SharedPtr armors_subscription_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr motor1_pos_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr motor2_pos_sub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   // ===== 遥控器参数 =====
@@ -561,16 +754,24 @@ private:
   int16_t mouse_y_{0};
   rclcpp::Time last_mouse_time_;
   bool mouse_time_valid_{false};
-  double motor2_mouse_target_{0.0};            ///< 鼠标模式 Pitch 积分目标位置 rad
-  bool motor2_mouse_target_valid_{false};      ///< 鼠标目标是否已播种
 
-  // ===== 普通模式控制状态 =====
-  double motor2_cmd_position_{0.0};            ///< 当前 Pitch 目标位置 rad
+  // ===== 控制与目标状态 =====
+  double motor1_actual_position_{0.0};
+  double motor2_actual_position_{0.0};
+  bool motor1_actual_valid_{false};
+  bool motor2_actual_valid_{false};
+
+  double motor1_target_position_{0.0};
+  double motor2_target_position_{0.0};
+  bool motor1_target_seeded_{false};
+
   std::chrono::steady_clock::time_point last_time_;
   bool last_time_valid_{false};
 
   // ===== 追踪模式相关 =====
   bool tracking_mode_{false};
+  bool trigger_pressed_{false};
+  bool keyboard_c_pressed_{false};
   std::chrono::steady_clock::time_point trigger_release_time_;
   bool trigger_release_time_valid_{false};
   double track_exit_timeout_;
@@ -583,14 +784,30 @@ private:
   double track_yaw_error_prev_{0.0};
   double track_pitch_error_prev_{0.0};
 
-  // ===== Yaw 速度预测前馈参数与状态 =====
-  double track_yaw_ff_gain_;
-  double track_yaw_ff_filter_;
-  double track_yaw_ff_deadzone_;
-  double yaw_angular_velocity_filtered_{0.0};
-  double yaw_ff_prev_{0.0};
-  std::chrono::steady_clock::time_point track_armors_last_time_;
-  bool track_armors_time_valid_{false};
+  // ===== 卡尔曼滤波器参数 =====
+  double kf_q_angle_{0.01};
+  double kf_q_velocity_{1.0};
+  double kf_r_yaw_{0.005};
+  double kf_r_pitch_{0.005};
+
+  // ===== 目标锁定参数 =====
+  double target_match_threshold_{0.3};
+  double target_lost_timeout_{0.3};
+
+  // ===== 卡尔曼滤波器状态 =====
+  KalmanAngle kf_yaw_{};
+  KalmanAngle kf_pitch_{};
+  bool kf_initialized_{false};
+  double kf_last_distance_{1.0};
+  std::chrono::steady_clock::time_point kf_last_time_;
+  bool kf_time_valid_{false};
+  bool kf_target_lost_{false};
+  std::chrono::steady_clock::time_point kf_target_lost_time_;
+  bool kf_target_lost_time_valid_{false};
+
+  // ===== Yaw/Pitch 瞄准偏移校准（硬件偏差补偿） =====
+  double track_yaw_offset_{0.0};
+  double track_pitch_offset_{0.0};
 
   // ===== 弹道补偿参数 =====
   double bullet_velocity_;

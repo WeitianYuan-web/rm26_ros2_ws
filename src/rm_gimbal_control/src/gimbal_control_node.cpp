@@ -1,103 +1,86 @@
 /**
  * @file gimbal_control_node.cpp
- * @brief 云台控制节点，使用图传遥控器（/vt_remote/channels）控制 Pitch/Yaw 轴电机
- * @author Auto-generated
- * @date 2026
+ * @brief 云台底层电机控制节点
+ *
+ * 负责 Pitch/Yaw 轴电机的初始化、CAN 总线管理与高频驱动。
+ * 控制指令由上层 auto_aim_node 通过 /gimbal/cmd 话题下发，本节点不包含任何控制逻辑。
+ *
+ * /gimbal/cmd 消息格式 (std_msgs/Float64MultiArray):
+ *   data[0]: mode       — 0.0=普通模式, 1.0=追踪模式
+ *   data[1]: yaw_cmd    — 普通模式: Yaw 速度 (rad/s); 追踪模式: Yaw 位置增量 (rad)
+ *   data[2]: pitch_cmd  — 普通模式: Pitch 绝对目标位置 (rad); 追踪模式: Pitch 位置增量 (rad)
  */
 
 #include "rm_gimbal_control/motor_cfg.h"
 #include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/int16_multi_array.hpp>
 #include <std_msgs/msg/float32.hpp>
-#include <std_msgs/msg/int32.hpp>
-#include <chrono>
-#include <thread>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <atomic>
-#include <memory>
+#include <chrono>
 #include <cmath>
-#include <set>
 #include <cstdlib>
-#include <string>
-#include <functional>
 #include <exception>
-#include <auto_aim_interfaces/msg/armors.hpp>
+#include <functional>
+#include <memory>
+#include <set>
+#include <string>
+#include <thread>
 
 /**
- * @brief 云台输入源模式
- */
-enum class GimbalControlSource {
-  MOUSE = 0,   ///< 仅鼠标
-  REMOTE = 1,  ///< 仅遥控器
-  HYBRID = 2   ///< 混合模式（鼠标优先窗口）
-};
-
-/**
- * @brief 云台控制节点类，负责云台 Pitch/Yaw 轴运动控制
+ * @brief 云台底层电机控制节点
+ *
+ * 仅负责硬件层：电机初始化、CAN 接口管理、高频 CSP 位置指令下发。
+ * 所有控制逻辑（遥控/鼠标/自瞄 PI）均在 auto_aim_node 中实现。
  */
 class GimbalControlNode : public rclcpp::Node {
 public:
   /**
-   * @brief 构造函数
+   * @brief 构造函数，声明并读取参数，初始化电机与 ROS 通信
    */
   GimbalControlNode()
       : rclcpp::Node("gimbal_control_node"),
         motor1_initialized_(false),
         motor2_initialized_(false) {
 
-    // 声明参数 - 电机1 (Yaw轴速度积分模式，可连续旋转)
+    // 电机1 (Yaw轴) 参数
     this->declare_parameter<std::string>("motor1_can_interface", "can0");
     this->declare_parameter<int>("motor1_id", 0x02);
-    this->declare_parameter<double>("motor1_max_velocity", 8.0);  // 电机1最大速度 rad/s
-    this->declare_parameter<int>("motor1_channel_index", 0);      // 电机1使用的通道索引 (ch0)
-    this->declare_parameter<int>("motor1_control_rate", 200);     // 电机1控制环频率 Hz
+    this->declare_parameter<double>("motor1_max_velocity", 8.0);
+    this->declare_parameter<int>("motor1_control_rate", 200);
+    this->declare_parameter<double>("motor1_control_speed", 10.0);
+    this->declare_parameter<double>("motor1_control_acceleration", 8.0);
 
-    // 声明参数 - 电机2 (Pitch轴建议配置)
+    // 电机2 (Pitch轴) 参数
     this->declare_parameter<std::string>("motor2_can_interface", "can0");
     this->declare_parameter<int>("motor2_id", 0x01);
-    this->declare_parameter<double>("motor2_min_position", -0.21); // 电机2最小位置 rad
-    this->declare_parameter<double>("motor2_max_position", 0.31);  // 电机2最大位置 rad
-    this->declare_parameter<int>("motor2_channel_index", 1);      // 电机2使用的通道索引 (ch1)
-
-    // 电机1控制参数
-    this->declare_parameter<double>("motor1_control_speed", 10.0);        // 电机1控制速度 rad/s
-    this->declare_parameter<double>("motor1_control_acceleration", 8.0); // 电机1加速度
-
-    // 电机2控制参数
-    this->declare_parameter<double>("motor2_control_speed", 4.0);        // 电机2控制速度 rad/s
-    this->declare_parameter<double>("motor2_control_acceleration", 4.0); // 电机2加速度
+    this->declare_parameter<double>("motor2_min_position", -0.21);
+    this->declare_parameter<double>("motor2_max_position", 0.31);
+    this->declare_parameter<double>("motor2_control_speed", 4.0);
+    this->declare_parameter<double>("motor2_control_acceleration", 4.0);
 
     // 通用参数
     this->declare_parameter<int>("master_id", 0xFF);
-    this->declare_parameter<int>("actuator_type", 5); // RS05
-    this->declare_parameter<int>("rc_min_value", 364);
-    this->declare_parameter<int>("rc_max_value", 1684);
-    this->declare_parameter<int>("rc_mid_value", 1024);
-    this->declare_parameter<int>("deadzone", 2); // 遥控器数值死区
+    this->declare_parameter<int>("actuator_type", 5);
 
-    // 鼠标控制参数
-    this->declare_parameter<double>("mouse_yaw_sensitivity", 0.02);    // 鼠标X -> Yaw速度 (rad/s)/count
-    this->declare_parameter<double>("mouse_pitch_sensitivity", 0.02); // 鼠标Y -> Pitch速度 (rad/s)/count
-    this->declare_parameter<int>("mouse_max_speed", 1500);              // 鼠标速度限幅 count
-    this->declare_parameter<std::string>("gimbal_control_source", "hybrid");
-    this->declare_parameter<double>("input_priority_timeout", 0.3);      // 键鼠优先窗口 s
+    // 追踪模式 Yaw 瞄准偏移校准（硬件层参数，由本节点内部应用）
+    this->declare_parameter<double>("track_yaw_offset", -0.2);
 
-    // 追踪模式参数
-    this->declare_parameter<double>("track_yaw_kp", 1.5);       // 追踪Yaw方向比例增益
-    this->declare_parameter<double>("track_yaw_ki", 0.4);       // 追踪Yaw方向积分增益
-    this->declare_parameter<double>("track_pitch_kp", -0.6);     // 追踪Pitch方向比例增益
-    this->declare_parameter<double>("track_pitch_ki", -0.2);     // 追踪Pitch方向积分增益
-    this->declare_parameter<double>("track_exit_timeout", 0.5); // 松开trigger后退出追踪的超时时间 s
+    // 指令超时保护：超过此时间未收到 /gimbal/cmd 则停止 Yaw 运动
+    this->declare_parameter<double>("cmd_timeout", 0.5);
 
-    // Yaw瞄准偏移校准
-    this->declare_parameter<double>("track_yaw_offset", -0.2);      // Yaw瞄准偏移 rad（偏右设负值，偏左设正值）
+    // 故障后自动重新初始化的冷却时间（s），防止快速反复重试
+    this->declare_parameter<double>("recovery_cooldown", 5.0);
 
-    // Yaw速度预测前馈参数
-    this->declare_parameter<double>("track_yaw_ff_gain",  2.0);    // 前馈增益（>1加大预测量，<1减小）
-    this->declare_parameter<double>("track_yaw_ff_filter", 0.2);   
-    this->declare_parameter<double>("track_yaw_ff_deadzone", 0.1); // 前馈角速度死区 rad/s（忽略小于此值的角速度）
-    // 弹道下坠补偿参数
-    this->declare_parameter<double>("bullet_velocity", 20.0);  // 弹丸初速度 m/s
-    this->declare_parameter<double>("gravity", 9.81);           // 重力加速度 m/s²
+    /**
+     * @brief 电机 socket 正常工作时的 CAN 接收超时（毫秒）
+     *
+     * 初始化成功后，将 SO_RCVTIMEO 设为此值而非 0（永久阻塞）。
+     * 当电机异常不回复时，recv() 会在超时后返回 EAGAIN 并由电机库抛出异常，
+     * 防止定时器回调永久冻结。5ms 在 1Mbps CAN 下对正常电机有充足余量（响应 < 1ms）。
+     */
+    this->declare_parameter<int>("motor_recv_timeout_ms", 5);
+
+    // CAN 接口管理参数
     this->declare_parameter<bool>("restart_can_on_startup", true);
     this->declare_parameter<int>("can_bitrate", 1000000);
     this->declare_parameter<int>("can_restart_ms", 100);
@@ -106,53 +89,28 @@ public:
     this->declare_parameter<int>("init_command_burst_count", 3);
     this->declare_parameter<int>("init_command_burst_interval_ms", 5);
 
-    // 获取参数
+    // 读取参数
     motor1_can_interface_ = this->get_parameter("motor1_can_interface").as_string();
     int motor1_id = this->get_parameter("motor1_id").as_int();
-    motor1_max_velocity_ = this->get_parameter("motor1_max_velocity").as_double();
-    motor1_channel_index_ = this->get_parameter("motor1_channel_index").as_int();
     motor1_control_rate_ = this->get_parameter("motor1_control_rate").as_int();
+    motor1_control_speed_ = this->get_parameter("motor1_control_speed").as_double();
+    motor1_control_acceleration_ = this->get_parameter("motor1_control_acceleration").as_double();
 
     motor2_can_interface_ = this->get_parameter("motor2_can_interface").as_string();
     int motor2_id = this->get_parameter("motor2_id").as_int();
     motor2_min_position_ = this->get_parameter("motor2_min_position").as_double();
     motor2_max_position_ = this->get_parameter("motor2_max_position").as_double();
-    motor2_channel_index_ = this->get_parameter("motor2_channel_index").as_int();
-
-    motor1_control_speed_ = this->get_parameter("motor1_control_speed").as_double();
-    motor1_control_acceleration_ = this->get_parameter("motor1_control_acceleration").as_double();
     motor2_control_speed_ = this->get_parameter("motor2_control_speed").as_double();
     motor2_control_acceleration_ = this->get_parameter("motor2_control_acceleration").as_double();
 
     int master_id = this->get_parameter("master_id").as_int();
     int actuator_type = this->get_parameter("actuator_type").as_int();
-    
-    rc_min_value_ = this->get_parameter("rc_min_value").as_int();
-    rc_max_value_ = this->get_parameter("rc_max_value").as_int();
-    rc_mid_value_ = this->get_parameter("rc_mid_value").as_int();
-    deadzone_ = this->get_parameter("deadzone").as_int();
-    mouse_yaw_sensitivity_ = this->get_parameter("mouse_yaw_sensitivity").as_double();
-    mouse_pitch_sensitivity_ = this->get_parameter("mouse_pitch_sensitivity").as_double();
-    mouse_max_speed_ = this->get_parameter("mouse_max_speed").as_int();
-    const std::string gimbal_control_source =
-        this->get_parameter("gimbal_control_source").as_string();
-    input_priority_timeout_ = this->get_parameter("input_priority_timeout").as_double();
-    gimbal_control_source_ = parse_gimbal_control_source(gimbal_control_source);
-
-    track_yaw_kp_ = this->get_parameter("track_yaw_kp").as_double();
-    track_yaw_ki_ = this->get_parameter("track_yaw_ki").as_double();
-    track_pitch_kp_ = this->get_parameter("track_pitch_kp").as_double();
-    track_pitch_ki_ = this->get_parameter("track_pitch_ki").as_double();
-    track_exit_timeout_ = this->get_parameter("track_exit_timeout").as_double();
 
     track_yaw_offset_ = this->get_parameter("track_yaw_offset").as_double();
+    cmd_timeout_ = this->get_parameter("cmd_timeout").as_double();
+    recovery_cooldown_ = this->get_parameter("recovery_cooldown").as_double();
+    motor_recv_timeout_ms_ = this->get_parameter("motor_recv_timeout_ms").as_int();
 
-    track_yaw_ff_gain_ = this->get_parameter("track_yaw_ff_gain").as_double();
-    track_yaw_ff_filter_ = this->get_parameter("track_yaw_ff_filter").as_double();
-    track_yaw_ff_deadzone_ = this->get_parameter("track_yaw_ff_deadzone").as_double();
-
-    bullet_velocity_ = this->get_parameter("bullet_velocity").as_double();
-    gravity_ = this->get_parameter("gravity").as_double();
     restart_can_on_startup_ = this->get_parameter("restart_can_on_startup").as_bool();
     can_bitrate_ = this->get_parameter("can_bitrate").as_int();
     can_restart_ms_ = this->get_parameter("can_restart_ms").as_int();
@@ -160,49 +118,37 @@ public:
     can_sudo_password_ = this->get_parameter("can_sudo_password").as_string();
     init_command_burst_count_ = this->get_parameter("init_command_burst_count").as_int();
     init_command_burst_interval_ms_ = this->get_parameter("init_command_burst_interval_ms").as_int();
-    if (init_command_burst_count_ < 1) {
-      init_command_burst_count_ = 1;
-    }
-    if (init_command_burst_interval_ms_ < 0) {
-      init_command_burst_interval_ms_ = 0;
-    }
+    if (init_command_burst_count_ < 1) init_command_burst_count_ = 1;
+    if (init_command_burst_interval_ms_ < 0) init_command_burst_interval_ms_ = 0;
 
     if (restart_can_on_startup_) {
       restart_configured_can_interfaces();
     }
 
-    // 使用参数创建电机对象
     motor1_ = std::make_unique<RobStrideMotor>(
-        motor1_can_interface_, 
-        static_cast<uint8_t>(master_id), 
-        static_cast<uint8_t>(motor1_id), 
+        motor1_can_interface_,
+        static_cast<uint8_t>(master_id),
+        static_cast<uint8_t>(motor1_id),
         actuator_type);
 
     motor2_ = std::make_unique<RobStrideMotor>(
-        motor2_can_interface_, 
-        static_cast<uint8_t>(master_id), 
-        static_cast<uint8_t>(motor2_id), 
+        motor2_can_interface_,
+        static_cast<uint8_t>(master_id),
+        static_cast<uint8_t>(motor2_id),
         actuator_type);
 
-    RCLCPP_INFO(this->get_logger(), "云台控制节点配置:");
-    RCLCPP_INFO(this->get_logger(), "  电机1(速度积分模式): 接口=%s, ID=0x%02X, 最大速度=%.2f rad/s, 通道=ch%d, 控制频率=%dHz", 
-                motor1_can_interface_.c_str(), motor1_id, motor1_max_velocity_, motor1_channel_index_, motor1_control_rate_);
-    RCLCPP_INFO(this->get_logger(), "  电机1 CSP参数: 控制速度=%.2f rad/s, 加速度=%.2f", motor1_control_speed_, motor1_control_acceleration_);
-    RCLCPP_INFO(this->get_logger(), "  电机2(位置映射模式): 接口=%s, ID=0x%02X, 范围=[%.2f, %.2f], 通道=ch%d", 
-                motor2_can_interface_.c_str(), motor2_id, motor2_min_position_, motor2_max_position_, motor2_channel_index_);
-    RCLCPP_INFO(this->get_logger(), "  电机2 CSP参数: 控制速度=%.2f rad/s, 加速度=%.2f", motor2_control_speed_, motor2_control_acceleration_);
-    RCLCPP_INFO(this->get_logger(), "  RC范围: %d~%d (中值%d)", rc_min_value_, rc_max_value_, rc_mid_value_);
-    RCLCPP_INFO(this->get_logger(), "  鼠标控制: yaw灵敏度=%.4f, pitch灵敏度=%.4f, 限幅=%d, 优先窗口=%.2fs",
-                mouse_yaw_sensitivity_, mouse_pitch_sensitivity_, mouse_max_speed_, input_priority_timeout_);
-    RCLCPP_INFO(this->get_logger(), "  云台输入源: %s",
-                gimbal_control_source_to_string(gimbal_control_source_));
-    RCLCPP_INFO(this->get_logger(), "  追踪参数: Yaw(Kp=%.2f, Ki=%.2f), Pitch(Kp=%.2f, Ki=%.2f), 退出超时=%.1fs",
-                track_yaw_kp_, track_yaw_ki_, track_pitch_kp_, track_pitch_ki_, track_exit_timeout_);
-    RCLCPP_INFO(this->get_logger(), "  Yaw偏移=%.4f rad (%.2f°), 前馈: 增益=%.2f, 滤波=%.2f, 死区=%.2f rad/s",
-                track_yaw_offset_, track_yaw_offset_ * 180.0 / M_PI, track_yaw_ff_gain_, track_yaw_ff_filter_, track_yaw_ff_deadzone_);
-    RCLCPP_INFO(this->get_logger(), "  弹道补偿: 弹速=%.1f m/s, 重力=%.2f m/s²", bullet_velocity_, gravity_);
+    RCLCPP_INFO(this->get_logger(), "云台底层控制节点配置:");
+    RCLCPP_INFO(this->get_logger(), "  电机1(Yaw): %s ID=0x%02X, 控制频率=%dHz, 速度=%.2f rad/s",
+                motor1_can_interface_.c_str(), motor1_id, motor1_control_rate_, motor1_control_speed_);
+    RCLCPP_INFO(this->get_logger(), "  电机2(Pitch): %s ID=0x%02X, 范围=[%.2f, %.2f] rad, 速度=%.2f rad/s",
+                motor2_can_interface_.c_str(), motor2_id,
+                motor2_min_position_, motor2_max_position_, motor2_control_speed_);
+    RCLCPP_INFO(this->get_logger(), "  Yaw偏移校准: %.4f rad (%.2f°)",
+                track_yaw_offset_, track_yaw_offset_ * 180.0 / M_PI);
+    RCLCPP_INFO(this->get_logger(), "  自动恢复冷却: %.1fs，CAN接收超时: %dms",
+                recovery_cooldown_, motor_recv_timeout_ms_);
 
-    // 创建发布者（用于监控当前目标位置）
+    // 发布者：监控目标位置与多圈角
     motor1_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
         "motor1/target_position", 10);
     motor2_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
@@ -212,49 +158,26 @@ public:
     motor2_multi_turn_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
         "motor2/multi_turn_position", 10);
 
-    // 创建 QoS 配置
-    auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
+    // 订阅来自 auto_aim_node 的云台控制指令
+    gimbal_cmd_subscription_ = this->create_subscription<std_msgs::msg::Float64MultiArray>(
+        "/gimbal/cmd",
+        rclcpp::QoS(rclcpp::KeepLast(10)),
+        std::bind(&GimbalControlNode::gimbal_cmd_callback, this, std::placeholders::_1));
 
-    // 订阅 /vt_remote/channels 消息
-    rc_subscription_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
-        "/vt_remote/channels",
-        qos,
-        std::bind(&GimbalControlNode::rc_callback, this, std::placeholders::_1));
-
-    // 订阅 /vt_remote/mouse 消息（手动云台控制）
-    mouse_subscription_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
-        "/vt_remote/mouse",
-        qos,
-        std::bind(&GimbalControlNode::mouse_callback, this, std::placeholders::_1));
-
-    // 订阅 /vt_remote/switches 消息（用于追踪模式切换）
-    switches_subscription_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
-        "/vt_remote/switches",
-        qos,
-        std::bind(&GimbalControlNode::switches_callback, this, std::placeholders::_1));
-
-    // 订阅 /detector/armors 消息（用于追踪模式）
-    armors_subscription_ = this->create_subscription<auto_aim_interfaces::msg::Armors>(
-        "/detector/armors",
-        rclcpp::SensorDataQoS(),
-        std::bind(&GimbalControlNode::armors_callback, this, std::placeholders::_1));
-
-    // 创建电机1的高频控制定时器（速度积分 + 下发指令）
+    // 高频电机控制定时器
     int period_ms = 1000 / motor1_control_rate_;
-    motor1_control_timer_ = this->create_wall_timer(
+    motor_control_timer_ = this->create_wall_timer(
         std::chrono::milliseconds(period_ms),
-        std::bind(&GimbalControlNode::motor1_control_timer_callback, this));
-    RCLCPP_INFO(this->get_logger(), "  电机1控制定时器: 周期=%dms (%dHz)", period_ms, motor1_control_rate_);
+        std::bind(&GimbalControlNode::motor_control_timer_callback, this));
 
-    // 初始化电机（使用异步方式，避免阻塞）
     init_motor(motor1_, motor1_initialized_, "电机1");
     init_motor(motor2_, motor2_initialized_, "电机2");
 
-    RCLCPP_INFO(this->get_logger(), "等待遥控器信号...");
+    RCLCPP_INFO(this->get_logger(), "云台底层控制节点已启动，等待 /gimbal/cmd 指令...");
   }
 
   /**
-   * @brief 析构函数
+   * @brief 析构函数，安全失能电机
    */
   ~GimbalControlNode() {
     RCLCPP_INFO(this->get_logger(), "正在停止电机...");
@@ -278,45 +201,28 @@ public:
 
 private:
   /**
-   * @brief 解析云台输入源参数
-   * @param source 参数字符串
-   * @return 输入源枚举
+   * @brief 读取电机原始多圈角（mechPos），失败时保留上次有效值
+   * @param motor 电机对象指针
+   * @param motor_name 电机名称（日志用）
+   * @param fallback_position 读取失败时的回退值
+   * @return 电机机械位置 rad
    */
-  GimbalControlSource parse_gimbal_control_source(const std::string &source) const {
-    if (source == "mouse") {
-      return GimbalControlSource::MOUSE;
-    }
-    if (source == "remote") {
-      return GimbalControlSource::REMOTE;
-    }
-    if (source == "hybrid") {
-      return GimbalControlSource::HYBRID;
-    }
-    RCLCPP_WARN(this->get_logger(),
-                "未知 gimbal_control_source='%s'，回退为 hybrid",
-                source.c_str());
-    return GimbalControlSource::HYBRID;
-  }
-
   /**
-   * @brief 云台输入源转字符串
-   * @param source 输入源枚举
-   * @return 输入源字符串
+   * @brief 读取电机原始多圈角（mechPos），失败时保留上次有效值
+   *
+   * 此函数发送参数读请求（0x7019）并等待电机回复。依赖 socket 上已设置的
+   * SO_RCVTIMEO（motor_recv_timeout_ms_）来限制等待时间，防止在电机故障时阻塞。
+   * 异常由本函数内部吞掉（返回 fallback），不触发上层恢复流程——
+   * 真正的故障会在 RobStrite_Motor_PosCSP_control 的 recv 超时时抛出并被
+   * motor_control_timer_callback 的 catch 块捕获。
+   *
+   * @param motor        电机对象指针
+   * @param motor_name   电机名称（日志用）
+   * @param fallback_position 读取失败时的回退值
+   * @return 电机机械位置 rad
    */
-  const char *gimbal_control_source_to_string(GimbalControlSource source) const {
-    switch (source) {
-      case GimbalControlSource::MOUSE:
-        return "mouse";
-      case GimbalControlSource::REMOTE:
-        return "remote";
-      case GimbalControlSource::HYBRID:
-      default:
-        return "hybrid";
-    }
-  }
-
-  double read_motor_mech_position(std::unique_ptr<RobStrideMotor>& motor,
-                                  const std::string& motor_name,
+  double read_motor_mech_position(std::unique_ptr<RobStrideMotor> &motor,
+                                  const std::string &motor_name,
                                   double fallback_position) {
     if (!motor) {
       return fallback_position;
@@ -325,18 +231,18 @@ private:
       motor->Get_RobStrite_Motor_parameter(0x7019);
       return static_cast<double>(motor->drw.mechPos.data);
     } catch (const std::exception &e) {
-      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                           "%s读取原始多圈角(mechPos)失败，保留上次值: %s",
+      // 500ms 节流，避免日志刷屏；超时说明电机未响应参数读，后续 CSP 会检测到真正故障
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                           "%s读取多圈角(mechPos)超时/失败: %s",
                            motor_name.c_str(), e.what());
       return fallback_position;
     }
   }
 
   /**
-   * @brief 初始化电机（异步方式，带超时）
-   * @param motor 电机对象指针
-   * @param initialized 初始化标志
-   * @param motor_name 电机名称（用于日志）
+   * @brief 对 shell 单引号内的特殊字符进行转义
+   * @param input 原始字符串
+   * @return 转义后的字符串
    */
   std::string shell_single_quote_escape(const std::string &input) {
     std::string escaped;
@@ -351,110 +257,99 @@ private:
     return escaped;
   }
 
+  /**
+   * @brief 构造带权限提升的 shell 指令（sudo）
+   * @param command 原始命令
+   * @return 完整的可执行命令字符串
+   */
   std::string build_privileged_command(const std::string &command) {
     if (!can_use_sudo_) {
       return command;
     }
-
     if (can_sudo_password_.empty()) {
       return "sudo -n " + command;
     }
-
     const std::string escaped_password = shell_single_quote_escape(can_sudo_password_);
     return "bash -lc \"printf '%s\\n' '" + escaped_password +
            "' | sudo -S -p '' " + command + "\"";
   }
 
+  /**
+   * @brief 执行 shell 命令
+   * @param command 命令字符串
+   * @return 执行成功返回 true
+   */
   bool run_shell_command(const std::string &command) {
     const std::string actual_command = build_privileged_command(command);
-    const int ret = std::system(actual_command.c_str());
-    return ret == 0;
+    return std::system(actual_command.c_str()) == 0;
   }
 
   /**
-   * @brief 启动时重启指定CAN接口，尽量恢复总线异常状态
-   * @param interface_name CAN接口名（如can0/can1）
-   * @return true 执行成功
-   * @return false 执行失败
+   * @brief 重启单个 CAN 接口并配置波特率与自动恢复
+   * @param interface_name CAN 接口名（如 can0/can1）
+   * @return 执行成功返回 true
    */
   bool restart_can_interface(const std::string &interface_name) {
     if (interface_name.empty()) {
       return false;
     }
-
     const std::string down_cmd = "ip link set " + interface_name + " down";
     const std::string config_cmd = "ip link set " + interface_name +
                                    " type can bitrate " + std::to_string(can_bitrate_) +
                                    " restart-ms " + std::to_string(can_restart_ms_);
     const std::string up_cmd = "ip link set " + interface_name + " up";
 
-    RCLCPP_INFO(this->get_logger(),
-                "重启CAN接口 %s: bitrate=%d, restart-ms=%d",
+    RCLCPP_INFO(this->get_logger(), "重启CAN接口 %s: bitrate=%d, restart-ms=%d",
                 interface_name.c_str(), can_bitrate_, can_restart_ms_);
 
     bool ok = true;
-    if (!run_shell_command(down_cmd)) {
-      RCLCPP_WARN(this->get_logger(), "执行失败: %s", down_cmd.c_str());
-      ok = false;
-    }
-    if (!run_shell_command(config_cmd)) {
-      RCLCPP_WARN(this->get_logger(), "执行失败: %s", config_cmd.c_str());
-      ok = false;
-    }
-    if (!run_shell_command(up_cmd)) {
-      RCLCPP_WARN(this->get_logger(), "执行失败: %s", up_cmd.c_str());
-      ok = false;
-    }
+    if (!run_shell_command(down_cmd)) { ok = false; }
+    if (!run_shell_command(config_cmd)) { ok = false; }
+    if (!run_shell_command(up_cmd)) { ok = false; }
 
     if (ok) {
       RCLCPP_INFO(this->get_logger(), "CAN接口 %s 重启完成", interface_name.c_str());
     } else {
-      RCLCPP_WARN(this->get_logger(), "CAN接口 %s 重启未完全成功（检查权限和接口状态）", interface_name.c_str());
+      RCLCPP_WARN(this->get_logger(), "CAN接口 %s 重启未完全成功（检查权限和接口状态）",
+                  interface_name.c_str());
     }
     return ok;
   }
 
   /**
-   * @brief 启动时重启当前节点使用到的CAN接口（去重后依次执行）
+   * @brief 重启本节点使用到的所有 CAN 接口（去重后依次执行）
    */
   void restart_configured_can_interfaces() {
     std::set<std::string> interfaces;
     interfaces.insert(motor1_can_interface_);
     interfaces.insert(motor2_can_interface_);
-
     for (const auto &iface : interfaces) {
-      if (iface.empty()) {
-        continue;
+      if (!iface.empty()) {
+        restart_can_interface(iface);
       }
-      restart_can_interface(iface);
     }
   }
 
   /**
-   * @brief 初始化电机（异步方式，带超时）
+   * @brief 异步初始化电机（含超时保护与重试）
    * @param motor 电机对象指针
-   * @param initialized 初始化标志
-   * @param motor_name 电机名称（用于日志）
+   * @param initialized 初始化完成标志（原子变量）
+   * @param motor_name 电机名称（日志用）
    */
-  void init_motor(std::unique_ptr<RobStrideMotor>& motor, std::atomic<bool>& initialized, 
-                  const std::string& motor_name) {
+  void init_motor(std::unique_ptr<RobStrideMotor> &motor,
+                  std::atomic<bool> &initialized,
+                  const std::string &motor_name) {
     if (!motor) {
       RCLCPP_ERROR(this->get_logger(), "%s对象未创建", motor_name.c_str());
       return;
     }
-    
     RCLCPP_INFO(this->get_logger(), "正在初始化%s...", motor_name.c_str());
-    
-    // 在单独线程中初始化，避免阻塞主线程
+
     std::thread init_thread([this, &motor, &initialized, motor_name]() {
       const int max_retries = 5;
 
       /**
-       * @brief 设置CAN接收超时（2秒），防止 receive_status_frame() 永久阻塞
-       *
-       * 原始 receive() 在 timeout_sec=0 时不设置超时，若电机未上电或CAN断开，
-       * recv() 将永久阻塞导致初始化线程卡死。设置超时后，recv() 超时返回，
-       * receive_status_frame() 抛出异常，由重试循环处理。
+       * @brief 设置 CAN 接收超时（2秒），防止 receive_status_frame() 在电机断电时永久阻塞
        */
       struct timeval recv_timeout;
       recv_timeout.tv_sec = 2;
@@ -466,8 +361,9 @@ private:
 
       for (int attempt = 1; attempt <= max_retries; ++attempt) {
         try {
-          auto execute_init_command_burst = [this, &motor_name](const std::function<void()> &send_once,
-                                                                const std::string &command_name) {
+          auto execute_burst = [this, &motor_name](
+                                   const std::function<void()> &send_once,
+                                   const std::string &command_name) {
             std::exception_ptr last_error;
             for (int i = 0; i < init_command_burst_count_; ++i) {
               try {
@@ -480,9 +376,9 @@ private:
               } catch (...) {
                 last_error = std::current_exception();
               }
-
               if (i + 1 < init_command_burst_count_ && init_command_burst_interval_ms_ > 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(init_command_burst_interval_ms_));
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(init_command_burst_interval_ms_));
               }
             }
             if (last_error) {
@@ -497,416 +393,212 @@ private:
             RCLCPP_INFO(this->get_logger(), "%s: 读取初始化前状态...", motor_name.c_str());
             motor->receive_status_frame();
             RCLCPP_INFO(this->get_logger(),
-                        "%s初始化前状态: pos=%.4f rad, vel=%.4f rad/s, torque=%.4f Nm, temp=%.1f C, err=0x%02X, pattern=%u",
+                        "%s初始化前状态: pos=%.4f rad, vel=%.4f rad/s, torque=%.4f Nm, temp=%.1f C, err=0x%02X",
                         motor_name.c_str(),
                         static_cast<double>(motor->position_),
                         static_cast<double>(motor->velocity_),
                         static_cast<double>(motor->torque_),
                         static_cast<double>(motor->temperature_),
-                        static_cast<unsigned int>(motor->error_code),
-                        static_cast<unsigned int>(motor->pattern));
+                        static_cast<unsigned int>(motor->error_code));
           } catch (const std::exception &e) {
-            RCLCPP_WARN(this->get_logger(),
-                        "%s: 读取初始化前状态失败，继续执行初始化: %s",
+            RCLCPP_WARN(this->get_logger(), "%s: 读取初始化前状态失败，继续: %s",
                         motor_name.c_str(), e.what());
           }
 
-          // 第一步：失能电机并清除错误（clear_error=1）
           RCLCPP_INFO(this->get_logger(), "%s: 失能电机并清除错误...", motor_name.c_str());
-          execute_init_command_burst([&motor]() { motor->Disenable_Motor(1); }, "失能清错");
+          execute_burst([&motor]() { motor->Disenable_Motor(1); }, "失能清错");
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-          // 第二步：读取当前电机模式
-          execute_init_command_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7005); }, "读取运行模式");
+          execute_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7005); }, "读取运行模式");
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          
-          // 第三步：如果不是CSP模式（mode=5），切换到CSP模式
+
           if (motor->drw.run_mode.data != 5) {
-            RCLCPP_INFO(this->get_logger(), "%s当前模式: %.0f, 切换到CSP模式...", 
+            RCLCPP_INFO(this->get_logger(), "%s当前模式: %.0f, 切换到CSP模式...",
                         motor_name.c_str(), motor->drw.run_mode.data);
-            execute_init_command_burst(
-                [&motor]() { motor->Set_RobStrite_Motor_parameter(0x7005, 5, 'j'); },
-                "设置CSP模式");
+            execute_burst([&motor]() { motor->Set_RobStrite_Motor_parameter(0x7005, 5, 'j'); },
+                          "设置CSP模式");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
-            execute_init_command_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7005); }, "复读运行模式");
+            execute_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7005); }, "复读运行模式");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
           }
-          
-          // 第四步：使能电机
-          execute_init_command_burst([&motor]() { motor->enable_motor(); }, "电机使能");
+
+          execute_burst([&motor]() { motor->enable_motor(); }, "电机使能");
           initialized = true;
 
-          double startup_reference_position = static_cast<double>(motor->position_);
+          double startup_position = static_cast<double>(motor->position_);
           try {
-            execute_init_command_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7019); }, "读取mechPos");
-            startup_reference_position = static_cast<double>(motor->drw.mechPos.data);
+            execute_burst([&motor]() { motor->Get_RobStrite_Motor_parameter(0x7019); }, "读取mechPos");
+            startup_position = static_cast<double>(motor->drw.mechPos.data);
           } catch (const std::exception &e) {
-            RCLCPP_WARN(this->get_logger(),
-                        "%s: 读取mechPos失败，回退到状态帧位置: %s",
+            RCLCPP_WARN(this->get_logger(), "%s: 读取mechPos失败，回退到状态帧位置: %s",
                         motor_name.c_str(), e.what());
           }
 
           if (motor.get() == motor1_.get()) {
-            motor1_target_position_ = startup_reference_position;
+            motor1_target_position_ = startup_position;
             motor1_target_seeded_ = true;
             motor1_last_time_valid_ = false;
           }
 
-          RCLCPP_INFO(this->get_logger(), "%s已使能（CSP位置控制模式，错误已清除）", motor_name.c_str());
-          RCLCPP_INFO(this->get_logger(), "%s启动位置: %.4f rad (%.2f deg)",
-                      motor_name.c_str(),
-                      startup_reference_position,
-                      startup_reference_position * 180.0 / M_PI);
-          if (motor1_initialized_ && motor2_initialized_ && motor1_ && motor2_) {
-            RCLCPP_INFO(this->get_logger(),
-                        "启动时电机位置 -> 电机1: %.4f rad (%.2f deg), 电机2: %.4f rad (%.2f deg)",
-                        motor1_->position_, motor1_->position_ * 180.0 / M_PI,
-                        motor2_->position_, motor2_->position_ * 180.0 / M_PI);
-          }
+          RCLCPP_INFO(this->get_logger(), "%s已使能，启动位置: %.4f rad (%.2f°)",
+                      motor_name.c_str(), startup_position, startup_position * 180.0 / M_PI);
 
-          // 初始化成功，清除接收超时（恢复阻塞模式用于正常高频通信）
-          struct timeval no_timeout{0, 0};
+          /**
+           * @brief 设置控制阶段 CAN 接收超时（motor_recv_timeout_ms_，默认 5ms）
+           *
+           * 不再使用 {0,0}（永久阻塞）。当电机进入故障态不回复报文时，
+           * recv() 会在超时后返回 EAGAIN，电机库随之抛出异常，使控制回调能够
+           * 正常捕获错误、打印报警并触发自动恢复，而不是永久冻结整个定时器线程。
+           */
+          struct timeval ctrl_timeout;
+          ctrl_timeout.tv_sec = 0;
+          ctrl_timeout.tv_usec = static_cast<suseconds_t>(motor_recv_timeout_ms_ * 1000);
           setsockopt(motor->socket_fd, SOL_SOCKET, SO_RCVTIMEO,
-                     &no_timeout, sizeof(no_timeout));
+                     &ctrl_timeout, sizeof(ctrl_timeout));
+          RCLCPP_INFO(this->get_logger(), "%s: CAN接收超时已设置为 %dms（防止控制循环阻塞）",
+                      motor_name.c_str(), motor_recv_timeout_ms_);
+          return;
 
-          return; // 成功，退出重试循环
         } catch (const std::exception &e) {
-          RCLCPP_WARN(this->get_logger(), 
-                      "%s: 初始化尝试 %d/%d 失败: %s",
+          RCLCPP_WARN(this->get_logger(), "%s: 初始化尝试 %d/%d 失败: %s",
                       motor_name.c_str(), attempt, max_retries, e.what());
           if (attempt < max_retries) {
-            RCLCPP_INFO(this->get_logger(), "%s: 等待1秒后重试...", motor_name.c_str());
             std::this_thread::sleep_for(std::chrono::seconds(1));
           }
         }
       }
 
-      // 所有重试都失败
-      RCLCPP_ERROR(this->get_logger(), 
-                  "%s初始化失败（已重试%d次）", motor_name.c_str(), max_retries);
-      RCLCPP_ERROR(this->get_logger(), 
-                  "请检查: 1) CAN接口是否正确配置 2) 电机是否连接并上电 3) 电机ID是否正确");
+      RCLCPP_ERROR(this->get_logger(), "%s初始化失败（已重试%d次）", motor_name.c_str(), max_retries);
+      RCLCPP_ERROR(this->get_logger(), "请检查: 1) CAN接口 2) 电机连接与上电 3) 电机ID");
       initialized = false;
     });
-    init_thread.detach(); // 分离线程，不等待完成
+    init_thread.detach();
   }
 
   /**
-   * @brief RC消息回调函数
-   * @param msg /vt_remote/channels 消息
+   * @brief 接收来自 auto_aim_node 的云台控制指令
+   *
+   * 消息格式:
+   *   data[0]: mode       — 0.0=普通, 1.0=追踪
+   *   data[1]: yaw_cmd    — 普通:速度(rad/s); 追踪:位置增量(rad)
+   *   data[2]: pitch_cmd  — 普通:绝对位置(rad); 追踪:位置增量(rad)
+   *
+   * 模式切换时：
+   *   普通→追踪: 以电机2当前实际位置为追踪起始点
+   *   追踪→普通: 以电机1当前实际位置为速度积分起始点（避免位置跳变）
+   *
+   * @param msg 控制指令消息
    */
-  void rc_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
-    // 检查是否有足够的数据
-    int max_index = std::max(motor1_channel_index_, motor2_channel_index_);
-    if (msg->data.size() <= static_cast<size_t>(max_index)) {
+  void gimbal_cmd_callback(const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
+    if (msg->data.size() < 3) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                           "RC消息数据长度不足: %zu, 需要至少 %d",
-                           msg->data.size(), max_index + 1);
+                           "/gimbal/cmd 数据长度不足: %zu (需要 3)", msg->data.size());
       return;
     }
 
-    // 追踪模式下不处理遥控器控制
-    if (tracking_mode_) {
-      return;
-    }
+    bool new_tracking_mode = (msg->data[0] != 0.0);
 
-    try {
-      const auto now = this->now();
-      const bool mouse_valid =
-          mouse_time_valid_ &&
-          ((now - last_mouse_time_).seconds() <= input_priority_timeout_);
-      const bool use_mouse_yaw =
-          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid && mouse_x_ != 0);
-      const bool use_mouse_pitch =
-          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
-
-      // 电机1：只更新目标速度，实际控制由高频定时器执行
-      if (motor1_initialized_) {
-        if (use_mouse_yaw) {
-          double mouse_vel = static_cast<double>(mouse_x_) * mouse_yaw_sensitivity_;
-          mouse_vel = std::max(-motor1_max_velocity_, std::min(motor1_max_velocity_, mouse_vel));
-          motor1_current_velocity_ = mouse_vel;
-        } else {
-          motor1_current_velocity_ = map_rc_to_velocity(
-              msg->data[motor1_channel_index_], motor1_max_velocity_);
-        }
-      }
-
-      // 控制电机2
+    if (new_tracking_mode && !tracking_mode_) {
       if (motor2_initialized_ && motor2_) {
-        if (use_mouse_pitch) {
-          if (!motor2_mouse_target_valid_) {
-            motor2_mouse_target_position_ = motor2_->position_;
-            motor2_mouse_target_valid_ = true;
-          }
-        } else {
-          control_motor(motor2_,
-                        msg->data[motor2_channel_index_],
-                        motor2_min_position_,
-                        motor2_max_position_,
-                        motor2_control_speed_,
-                        motor2_target_position_publisher_,
-                        "电机2",
-                        motor2_channel_index_);
-          motor2_mouse_target_valid_ = false;
-        }
+        motor2_track_target_position_ = static_cast<double>(motor2_->position_);
       }
-    } catch (const std::exception &e) {
-      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                            "控制电机时出错: %s", e.what());
-    }
-  }
-
-  /**
-   * @brief 鼠标消息回调，更新云台手动控制输入
-   * @param msg /vt_remote/mouse 消息 [mouse_x, mouse_y, mouse_z, left, right, middle]
-   */
-  void mouse_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
-    if (gimbal_control_source_ == GimbalControlSource::REMOTE) {
-      return;
-    }
-
-    if (msg->data.size() < 2) {
-      return;
-    }
-    int clamped_x = std::max(-mouse_max_speed_, std::min(mouse_max_speed_, static_cast<int>(msg->data[0])));
-    int clamped_y = std::max(-mouse_max_speed_, std::min(mouse_max_speed_, static_cast<int>(msg->data[1])));
-    mouse_x_ = static_cast<int16_t>(clamped_x);
-    mouse_y_ = static_cast<int16_t>(clamped_y);
-    if ((clamped_x != 0) || (clamped_y != 0)) {
-      last_mouse_time_ = this->now();
-      mouse_time_valid_ = true;
-    }
-  }
-
-  /**
-   * @brief Switches消息回调，处理追踪模式切换
-   *
-   * switches消息格式: [mode, pause, fn_left, fn_right, trigger]
-   * - trigger (index 4): 0=松开, 1=按下
-   * - 按下trigger立即进入追踪模式
-   * - 松开trigger超过track_exit_timeout_后退出追踪模式
-   * @param msg /vt_remote/switches 消息
-   */
-  void switches_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
-    if (msg->data.size() < 5) {
-      return;
-    }
-
-    bool trigger_pressed = (msg->data[4] != 0);
-
-    if (trigger_pressed) {
-      // trigger按下 → 进入追踪模式
-      if (!tracking_mode_) {
-        tracking_mode_ = true;
-        // 重置增量PI控制器状态
-        track_yaw_error_prev_ = 0.0;
-        track_pitch_error_prev_ = 0.0;
-        // 重置速度预测前馈状态
-        yaw_angular_velocity_filtered_ = 0.0;
-        yaw_ff_prev_ = 0.0;
-        track_armors_time_valid_ = false;
-        // 初始化追踪模式下电机2的目标位置为当前实际位置
-        if (motor2_initialized_ && motor2_) {
-          motor2_track_target_position_ = motor2_->position_;
-        }
-        RCLCPP_INFO(this->get_logger(), ">>> 进入追踪模式");
+      RCLCPP_INFO(this->get_logger(), ">>> 进入追踪模式，Pitch锁定: %.4f rad",
+                  motor2_track_target_position_);
+    } else if (!new_tracking_mode && tracking_mode_) {
+      if (motor1_initialized_ && motor1_) {
+        motor1_target_position_ = static_cast<double>(motor1_->position_);
+        motor1_target_seeded_ = true;
       }
-      // 重置松开计时
-      trigger_release_time_valid_ = false;
-    } else {
-      // trigger松开
-      if (tracking_mode_) {
-        if (!trigger_release_time_valid_) {
-          // 首次检测到松开，记录时间
-          trigger_release_time_ = std::chrono::steady_clock::now();
-          trigger_release_time_valid_ = true;
-        } else {
-          // 检查松开时间是否超过阈值
-          double elapsed = std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - trigger_release_time_).count();
-          if (elapsed > track_exit_timeout_) {
-            tracking_mode_ = false;
-            // 退出追踪时，将电机1目标位置更新为当前实际位置，确保摇杆控制平滑恢复
-            if (motor1_initialized_ && motor1_) {
-              motor1_target_position_ = motor1_->position_;
-            }
-            RCLCPP_INFO(this->get_logger(), "<<< 退出追踪模式 (松开超过%.1fs)", track_exit_timeout_);
-          }
-        }
-      }
+      RCLCPP_INFO(this->get_logger(), "<<< 退出追踪模式");
     }
-  }
 
-  /**
-   * @brief Armors消息回调，在追踪模式下执行增量PI控制
-   *
-   * 使用增量式PI控制器: Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)
-   * - Yaw方向 (电机1): 根据目标水平角度偏差调整
-   * - Pitch方向 (电机2): 根据目标垂直角度偏差调整
-   * @param msg /detector/armors 消息（包含检测到的装甲板位姿信息）
-   */
-  void armors_callback(const auto_aim_interfaces::msg::Armors::SharedPtr msg) {
+    tracking_mode_ = new_tracking_mode;
+    last_cmd_time_ = this->now();
+    cmd_received_ = true;
+
     if (!tracking_mode_) {
-      return;
-    }
-    if (msg->armors.empty()) {
-      return;
-    }
-
-    // 选择距离图像中心最近的装甲板
-    const auto* best_armor = &msg->armors[0];
-    for (size_t i = 1; i < msg->armors.size(); ++i) {
-      if (msg->armors[i].distance_to_image_center < best_armor->distance_to_image_center) {
-        best_armor = &msg->armors[i];
-      }
-    }
-
-    // 获取装甲板在相机坐标系下的位置 (x=右, y=下, z=前)
-    double x = best_armor->pose.position.x;
-    double y = best_armor->pose.position.y;
-    double z = best_armor->pose.position.z;
-
-    if (z < 0.01) {
-      return; // 距离过近或无效数据
-    }
-
-    // 弹道下坠补偿：根据目标距离计算弹丸抛物线下坠量
-    // 物理模型: t = d/v0, Δh = ½gt², θ_comp = atan(Δh/d)
-    double distance = std::sqrt(x * x + y * y + z * z);
-    double t_flight = distance / bullet_velocity_;
-    double bullet_drop = 0.5 * gravity_ * t_flight * t_flight;
-    double drop_compensation = std::atan2(bullet_drop, distance); // 补偿角 (rad)，始终为正
-
-    // 计算角度误差 (rad)
-    double yaw_error = std::atan2(x, z);    // 正值 = 目标在右侧
-
-    /**
-     * @brief Pitch误差融合弹道补偿
-     *
-     * 将弹道下坠补偿融入pitch误差信号，而不是作为累加偏移。
-     * 补偿后 pitch_error = atan2(y,z) - drop_compensation：
-     *   PI 控制器驱动枪口抬高，使弹丸下落后刚好命中目标。
-     */
-    double pitch_error = std::atan2(y, z) - drop_compensation;
-
-    /**
-     * @brief Yaw方向速度预测前馈
-     *
-     * 通过计算目标的Yaw角速度，结合弹丸飞行时间，预测目标在弹丸到达时的位置偏移。
-     * 使用增量式前馈：每次只应用前馈变化量，避免累积误差。
-     * 角速度使用一阶低通滤波器平滑，抑制检测噪声。
-     *
-     * 前馈量 = 滤波角速度 × 弹丸飞行时间 × 前馈增益
-     */
-    auto armors_now = std::chrono::steady_clock::now();
-    double yaw_angular_velocity = 0.0;
-    if (track_armors_time_valid_) {
-      double armors_dt = std::chrono::duration<double>(
-          armors_now - track_armors_last_time_).count();
-      if (armors_dt > 0.001 && armors_dt < 0.5) { // 合理的时间间隔
-        yaw_angular_velocity = (yaw_error - track_yaw_error_prev_) / armors_dt;
-      }
-    }
-    track_armors_last_time_ = armors_now;
-    track_armors_time_valid_ = true;
-
-    // 死区：忽略微小角速度（抑制静止时检测噪声导致的前馈漂移）
-    if (std::abs(yaw_angular_velocity) < track_yaw_ff_deadzone_) {
-      yaw_angular_velocity = 0.0;
-    }
-
-    // 低通滤波平滑角速度
-    yaw_angular_velocity_filtered_ = track_yaw_ff_filter_ * yaw_angular_velocity
-                                   + (1.0 - track_yaw_ff_filter_) * yaw_angular_velocity_filtered_;
-
-    // 增量式PI: Δu(k) = Kp * [e(k) - e(k-1)] + Ki * e(k)
-    double yaw_delta = track_yaw_kp_ * (yaw_error - track_yaw_error_prev_)
-                     + track_yaw_ki_ * yaw_error;
-    track_yaw_error_prev_ = yaw_error;
-
-    double pitch_delta = track_pitch_kp_ * (pitch_error - track_pitch_error_prev_)
-                       + track_pitch_ki_ * pitch_error;
-    track_pitch_error_prev_ = pitch_error;
-
-    // 速度预测前馈：增量式更新，只应用前馈变化量
-    double yaw_ff_new = yaw_angular_velocity_filtered_ * t_flight * track_yaw_ff_gain_;
-    double yaw_ff_delta = yaw_ff_new - yaw_ff_prev_;
-    yaw_ff_prev_ = yaw_ff_new;
-
-    // 更新电机1 (Yaw) 目标位置 = PI增量 + 前馈增量
-    motor1_target_position_ += yaw_delta + yaw_ff_delta;
-
-    // 更新电机2 (Pitch) 目标位置
-    motor2_track_target_position_ += pitch_delta;
-
-    // 限幅
-    motor2_track_target_position_ = std::max(motor2_min_position_,
-                                     std::min(motor2_max_position_, motor2_track_target_position_));
-
-    // 定期打印追踪信息
-    static int track_log_counter = 0;
-    if (++track_log_counter >= 30) { // 约每秒打印一次（假设30Hz检测频率）
-      RCLCPP_INFO(this->get_logger(),
-                  "[追踪] 距离=%.2fm, 误差: yaw=%.2f° pitch=%.2f°, "
-                  "弹道补偿=%.2f°, "
-                  "Yaw角速度=%.1f°/s 前馈=%.2f°",
-                  distance,
-                  yaw_error * 180.0 / M_PI,
-                  pitch_error * 180.0 / M_PI,
-                  drop_compensation * 180.0 / M_PI,
-                  yaw_angular_velocity_filtered_ * 180.0 / M_PI,
-                  yaw_ff_new * 180.0 / M_PI);
-      track_log_counter = 0;
+      current_yaw_velocity_ = msg->data[1];
+      motor2_cmd_position_ = std::max(motor2_min_position_,
+                                      std::min(motor2_max_position_, msg->data[2]));
+    } else {
+      motor1_target_position_ += msg->data[1];
+      motor2_track_target_position_ += msg->data[2];
+      motor2_track_target_position_ = std::max(motor2_min_position_,
+                                               std::min(motor2_max_position_,
+                                                        motor2_track_target_position_));
     }
   }
 
   /**
-   * @brief 将RC值映射到速度值
-   * @param rc_value 遥控器值 (364 ~ 1684)
-   * @param max_velocity 最大速度 rad/s
-   * @return 映射后的速度值 [-max_velocity, +max_velocity]，中值对应0
-   */
-  double map_rc_to_velocity(int rc_value, double max_velocity) {
-    // 限制输入范围
-    int clamped_value = std::max(rc_min_value_, std::min(rc_max_value_, rc_value));
-
-    // 死区处理：中值附近视为0速度
-    if (std::abs(clamped_value - rc_mid_value_) < deadzone_) {
-      return 0.0;
-    }
-
-    // 归一化到 [-1.0, +1.0]，以中值为零点
-    double normalized = static_cast<double>(clamped_value - rc_mid_value_) /
-                        static_cast<double>(rc_max_value_ - rc_mid_value_);
-
-    // 限幅到 [-1.0, +1.0]
-    normalized = std::max(-1.0, std::min(1.0, normalized));
-
-    return normalized * max_velocity;
-  }
-
-  /**
-   * @brief 电机1高频控制定时器回调
+   * @brief 触发电机自动恢复（带冷却时间，通过延迟定时器避免在回调内直接阻塞初始化）
    *
-   * 以固定高频率（默认200Hz）执行，根据当前目标速度做积分得到目标位置，
-   * 并下发 CSP 位置指令。不做位置限幅，电机可连续旋转。
-   * RC 回调只负责更新 motor1_current_velocity_。
+   * 每次故障后等待 recovery_cooldown_ 秒再重新初始化，防止 CAN 总线未稳定时反复重试。
    */
-  void motor1_control_timer_callback() {
+  void trigger_motor_recovery() {
+    if (recovery_in_progress_) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "已有恢复流程进行中，跳过本次触发");
+      return;
+    }
+
+    if (last_recovery_time_valid_) {
+      double elapsed = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - last_recovery_time_).count();
+      if (elapsed < recovery_cooldown_) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "距上次恢复仅 %.1fs，冷却中（%.1fs后可再试）",
+                             elapsed, recovery_cooldown_ - elapsed);
+        return;
+      }
+    }
+
+    recovery_in_progress_ = true;
+    last_recovery_time_ = std::chrono::steady_clock::now();
+    last_recovery_time_valid_ = true;
+
+    RCLCPP_WARN(this->get_logger(),
+                "电机故障，%.1fs 后自动重新初始化（CAN重启+电机使能）", recovery_cooldown_);
+
+    // 通过一次性定时器延迟执行，避免在主控制回调内长时间阻塞
+    recovery_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(static_cast<int>(recovery_cooldown_ * 1000)),
+        [this]() {
+          recovery_timer_.reset();
+          RCLCPP_WARN(this->get_logger(), "开始自动重新初始化电机...");
+          restart_configured_can_interfaces();
+          init_motor(motor1_, motor1_initialized_, "电机1");
+          init_motor(motor2_, motor2_initialized_, "电机2");
+          recovery_in_progress_ = false;
+        });
+  }
+
+  /**
+   * @brief 高频电机控制定时器回调（默认 200Hz）
+   *
+   * 普通模式: 对接收到的 Yaw 速度做时间积分得到目标位置，驱动 Pitch 到绝对目标位置。
+   * 追踪模式: 直接驱动到由 gimbal_cmd_callback 累积的目标位置；Yaw 叠加偏移校准量。
+   * 超时保护: 若超过 cmd_timeout_ 未收到指令，Yaw 速度置零。
+   *
+   * 关键保护机制:
+   *   - 电机故障检测: 周期性检查 error_code，非零时自动触发恢复。
+   *   - 自动恢复: 异常后不永久停止，调用 trigger_motor_recovery() 等待冷却后重新初始化。
+   *   - Yaw 轴（电机1）不做位置偏差检测：该轴需要连续多圈旋转，target 与 actual 的
+   *     累积差值无意义，真实故障由 motor_recv_timeout_ms 超时异常检测。
+   */
+  void motor_control_timer_callback() {
     if (!motor1_initialized_ || !motor1_) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "电机未就绪%s，跳过控制指令",
+                           recovery_in_progress_ ? "（自动恢复进行中）" : "（等待初始化）");
       return;
     }
 
     try {
-      // 首次进入，用电机当前位置作为初始目标
       if (!motor1_last_time_valid_) {
         motor1_last_time_ = std::chrono::steady_clock::now();
         if (!motor1_target_seeded_) {
-          motor1_target_position_ = motor1_->position_;
+          motor1_target_position_ = static_cast<double>(motor1_->position_);
+          motor1_target_seeded_ = true;
         }
         motor1_last_time_valid_ = true;
         return;
@@ -915,301 +607,193 @@ private:
       auto now = std::chrono::steady_clock::now();
       double dt = std::chrono::duration<double>(now - motor1_last_time_).count();
       motor1_last_time_ = now;
-
-      // 限制 dt 防止异常跳变
       if (dt > 0.05) {
         dt = 0.05;
       }
 
-      if (!tracking_mode_) {
-        // 普通模式：使用当前速度做积分
-        double velocity = motor1_current_velocity_;
-        motor1_target_position_ += velocity * dt;
-
-        // 鼠标控制电机2：将鼠标Y轴速度积分为目标位置（与电机1一致）
-        const auto now_ros = this->now();
-        const bool mouse_valid =
-            mouse_time_valid_ &&
-            ((now_ros - last_mouse_time_).seconds() <= input_priority_timeout_);
-        const bool use_mouse_pitch =
-            (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-            ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
-        if (motor2_initialized_ && motor2_ && use_mouse_pitch) {
-          if (!motor2_mouse_target_valid_) {
-            motor2_mouse_target_position_ = motor2_->position_;
-            motor2_mouse_target_valid_ = true;
-          }
-
-          double mouse_pitch_velocity =
-              static_cast<double>(mouse_y_) * mouse_pitch_sensitivity_;
-          mouse_pitch_velocity = std::max(-motor2_control_speed_,
-                                          std::min(motor2_control_speed_, mouse_pitch_velocity));
-
-          motor2_mouse_target_position_ += mouse_pitch_velocity * dt;
-          motor2_mouse_target_position_ = std::max(
-              motor2_min_position_,
-              std::min(motor2_max_position_, motor2_mouse_target_position_));
-
-          motor2_->RobStrite_Motor_PosCSP_control(
-              motor2_control_speed_,
-              motor2_mouse_target_position_);
-
-          auto target_msg2 = std_msgs::msg::Float32();
-          target_msg2.data = static_cast<float>(motor2_mouse_target_position_);
-          motor2_target_position_publisher_->publish(target_msg2);
+      // ── 电机故障码周期性检查（每 3 秒检测一次）──────────────────────────────
+      static int health_counter = 0;
+      if (++health_counter >= motor1_control_rate_ * 3) {
+        health_counter = 0;
+        if (motor1_ && motor1_->error_code != 0) {
+          RCLCPP_ERROR(this->get_logger(),
+                       "电机1 故障码 0x%02X，触发自动恢复", motor1_->error_code);
+          motor1_initialized_ = false;
+          motor2_initialized_ = false;
+          motor1_last_time_valid_ = false;
+          motor1_target_seeded_ = false;
+          trigger_motor_recovery();
+          return;
+        }
+        if (motor2_ && motor2_->error_code != 0) {
+          RCLCPP_ERROR(this->get_logger(),
+                       "电机2 故障码 0x%02X，触发自动恢复", motor2_->error_code);
+          motor1_initialized_ = false;
+          motor2_initialized_ = false;
+          motor1_last_time_valid_ = false;
+          motor1_target_seeded_ = false;
+          trigger_motor_recovery();
+          return;
         }
       }
-      // 追踪模式下，motor1_target_position_ 由 armors_callback 更新
 
-      // 下发电机1 CSP 位置指令（追踪模式下叠加瞄准偏移校准）
-      double motor1_cmd_position = motor1_target_position_;
-      if (tracking_mode_) {
-        motor1_cmd_position += track_yaw_offset_;
+      const bool cmd_active = cmd_received_ &&
+          ((this->now() - last_cmd_time_).seconds() <= cmd_timeout_);
+
+      if (!tracking_mode_) {
+        double yaw_vel = cmd_active ? current_yaw_velocity_ : 0.0;
+        motor1_target_position_ += yaw_vel * dt;
       }
-      motor1_->RobStrite_Motor_PosCSP_control(
-          motor1_control_speed_,
-          motor1_cmd_position);
+      // 追踪模式下 motor1_target_position_ 已由 gimbal_cmd_callback 累积
 
-      // 追踪模式下同时以高频率下发电机2指令
-      if (tracking_mode_ && motor2_initialized_ && motor2_) {
-        motor2_->RobStrite_Motor_PosCSP_control(
-            motor2_control_speed_,
-            motor2_track_target_position_);
-        auto target_msg2 = std_msgs::msg::Float32();
-        target_msg2.data = motor2_track_target_position_;
-        motor2_target_position_publisher_->publish(target_msg2);
+      // ── 下发电机指令 ──────────────────────────────────────────────────────────
+      if (!tracking_mode_) {
+        motor1_->RobStrite_Motor_PosCSP_control(motor1_control_speed_, motor1_target_position_);
+
+        if (motor2_initialized_ && motor2_) {
+          motor2_->RobStrite_Motor_PosCSP_control(motor2_control_speed_, motor2_cmd_position_);
+          auto msg2 = std_msgs::msg::Float32();
+          msg2.data = static_cast<float>(motor2_cmd_position_);
+          motor2_target_position_publisher_->publish(msg2);
+        }
+      } else {
+        double yaw_cmd = motor1_target_position_ + track_yaw_offset_;
+        motor1_->RobStrite_Motor_PosCSP_control(motor1_control_speed_, yaw_cmd);
+
+        if (motor2_initialized_ && motor2_) {
+          motor2_->RobStrite_Motor_PosCSP_control(motor2_control_speed_,
+                                                   motor2_track_target_position_);
+          auto msg2 = std_msgs::msg::Float32();
+          msg2.data = static_cast<float>(motor2_track_target_position_);
+          motor2_target_position_publisher_->publish(msg2);
+        }
       }
 
+      // 发布电机1目标位置
+      auto msg1 = std_msgs::msg::Float32();
+      msg1.data = static_cast<float>(motor1_target_position_);
+      motor1_target_position_publisher_->publish(msg1);
+
+      // 发布多圈角反馈
       if (motor1_initialized_ && motor1_) {
         motor1_multi_turn_position_ = read_motor_mech_position(
             motor1_, "电机1", motor1_multi_turn_position_);
-        auto multi_turn_msg1 = std_msgs::msg::Float32();
-        multi_turn_msg1.data = static_cast<float>(motor1_multi_turn_position_);
-        motor1_multi_turn_position_publisher_->publish(multi_turn_msg1);
+        auto multi1 = std_msgs::msg::Float32();
+        multi1.data = static_cast<float>(motor1_multi_turn_position_);
+        motor1_multi_turn_position_publisher_->publish(multi1);
       }
       if (motor2_initialized_ && motor2_) {
         motor2_multi_turn_position_ = read_motor_mech_position(
             motor2_, "电机2", motor2_multi_turn_position_);
-        auto multi_turn_msg2 = std_msgs::msg::Float32();
-        multi_turn_msg2.data = static_cast<float>(motor2_multi_turn_position_);
-        motor2_multi_turn_position_publisher_->publish(multi_turn_msg2);
+        auto multi2 = std_msgs::msg::Float32();
+        multi2.data = static_cast<float>(motor2_multi_turn_position_);
+        motor2_multi_turn_position_publisher_->publish(multi2);
       }
 
-      // 发布电机1目标位置
-      auto target_msg = std_msgs::msg::Float32();
-      target_msg.data = motor1_target_position_;
-      motor1_target_position_publisher_->publish(target_msg);
-
-      // 定期打印信息（降低频率）
-      static int counter1 = 0;
-      if (++counter1 >= motor1_control_rate_) { // 约每秒打印一次
+      // 降频日志（每秒一次，含目标-实际偏差供监控）
+      static int log_counter = 0;
+      if (++log_counter >= motor1_control_rate_) {
+        double pos_err = motor1_target_position_ - static_cast<double>(motor1_->position_);
         if (tracking_mode_) {
           RCLCPP_INFO(this->get_logger(),
-                      "电机1(追踪模式@%dHz): "
-                      "目标位置=%.4f rad (%.2f deg), "
-                      "实际位置=%.4f rad (%.2f deg)",
+                      "电机1(追踪@%dHz): 目标=%.4f rad, 实际=%.4f rad, 偏差=%.3f rad | "
+                      "电机2: 目标=%.4f rad, 实际=%.4f rad",
                       motor1_control_rate_,
-                      motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
-                      motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+                      motor1_target_position_, static_cast<double>(motor1_->position_), pos_err,
+                      motor2_track_target_position_,
+                      motor2_ ? static_cast<double>(motor2_->position_) : 0.0);
         } else {
           RCLCPP_INFO(this->get_logger(),
-                      "电机1(速度积分@%dHz): 速度=%.4f rad/s, "
-                      "目标位置=%.4f rad (%.2f deg), "
-                      "实际位置=%.4f rad (%.2f deg)",
+                      "电机1(速度积分@%dHz): 速度=%.4f rad/s, 目标=%.4f rad, 实际=%.4f rad, 偏差=%.3f rad",
                       motor1_control_rate_,
-                      motor1_current_velocity_,
-                      motor1_target_position_, motor1_target_position_ * 180.0 / M_PI,
-                      motor1_->position_, motor1_->position_ * 180.0 / M_PI);
+                      current_yaw_velocity_,
+                      motor1_target_position_,
+                      static_cast<double>(motor1_->position_),
+                      pos_err);
         }
-        counter1 = 0;
+        log_counter = 0;
       }
+
     } catch (const std::exception &e) {
-      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                            "电机控制循环异常，已暂停控制避免程序退出: %s", e.what());
+      RCLCPP_ERROR(this->get_logger(), "电机控制异常: %s", e.what());
       motor1_initialized_ = false;
       motor2_initialized_ = false;
       motor1_last_time_valid_ = false;
       motor1_target_seeded_ = false;
-      motor2_mouse_target_valid_ = false;
+      trigger_motor_recovery();
     } catch (...) {
-      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                            "电机控制循环发生未知异常，已暂停控制避免程序退出");
+      RCLCPP_ERROR(this->get_logger(), "电机控制发生未知异常");
       motor1_initialized_ = false;
       motor2_initialized_ = false;
       motor1_last_time_valid_ = false;
       motor1_target_seeded_ = false;
-      motor2_mouse_target_valid_ = false;
+      trigger_motor_recovery();
     }
   }
 
-  /**
-   * @brief 将RC值映射到电机位置
-   * @param rc_value 遥控器值 (364 ~ 1684)
-   * @param min_pos 目标最小位置
-   * @param max_pos 目标最大位置
-   * @return 映射后的目标位置
-   */
-  double map_rc_to_pos(int rc_value, double min_pos, double max_pos) {
-    // 限制输入范围
-    int clamped_value = std::max(rc_min_value_, std::min(rc_max_value_, rc_value));
-
-    // 死区处理
-    if (std::abs(clamped_value - rc_mid_value_) < deadzone_) {
-        // 在死区内，对应输出范围的中值？
-        // 或者我们可以定义死区内的输出值。这里简单地映射到中点位置
-        // 注意：如果 min_pos 和 max_pos 不是对称的，这就需要调整
-        // 这里假设线性映射，死区对应的是 rc_mid_value_ 对应的输出位置
-        clamped_value = rc_mid_value_; 
-    }
-
-    // 归一化 (0.0 ~ 1.0)
-    double normalized = static_cast<double>(clamped_value - rc_min_value_) / 
-                        static_cast<double>(rc_max_value_ - rc_min_value_);
-    
-    // 映射到输出范围
-    return min_pos + normalized * (max_pos - min_pos);
-  }
-
-  /**
-   * @brief 控制单个电机
-   * @param motor 电机对象指针
-   * @param rc_value 遥控器通道值
-   * @param min_position 最小目标位置
-   * @param max_position 最大目标位置
-   * @param control_speed 控制速度 rad/s
-   * @param publisher 目标位置发布者
-   * @param motor_name 电机名称（用于日志）
-   * @param channel_index 遥控器通道索引
-   */
-  void control_motor(std::unique_ptr<RobStrideMotor>& motor,
-                     int rc_value,
-                     double min_position,
-                     double max_position,
-                     double control_speed,
-                     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr publisher,
-                     const std::string& motor_name,
-                     int channel_index) {
-    
-    // 计算目标位置
-    double target_position = map_rc_to_pos(rc_value, min_position, max_position);
-
-    // 使用CSP位置模式控制
-    motor->RobStrite_Motor_PosCSP_control(
-        control_speed, 
-        target_position);
-
-    // 发布目标位置
-    auto target_msg = std_msgs::msg::Float32();
-    target_msg.data = target_position;
-    publisher->publish(target_msg);
-
-    // 定期打印信息（降低频率）
-    static int counter = 0;
-    if (++counter >= 50) { // 每50次打印一次
-      RCLCPP_INFO(this->get_logger(),
-                  "%s: ch[%d]=%d -> 目标位置: %.4f rad (%.2f deg), "
-                  "实际位置: %.4f rad (%.2f deg)",
-                  motor_name.c_str(), channel_index, rc_value,
-                  target_position, target_position * 180.0 / M_PI,
-                  motor->position_, motor->position_ * 180.0 / M_PI);
-      counter = 0;
-    }
-  }
-
+  // ===== 电机对象 =====
   std::unique_ptr<RobStrideMotor> motor1_;
   std::unique_ptr<RobStrideMotor> motor2_;
   std::atomic<bool> motor1_initialized_;
   std::atomic<bool> motor2_initialized_;
-  
-  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr rc_subscription_;
-  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr mouse_subscription_;
+
+  // ===== ROS 通信 =====
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr gimbal_cmd_subscription_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_target_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_target_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor1_multi_turn_position_publisher_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr motor2_multi_turn_position_publisher_;
-  rclcpp::TimerBase::SharedPtr motor1_control_timer_;      ///< 电机1高频控制定时器
+  rclcpp::TimerBase::SharedPtr motor_control_timer_;
+  rclcpp::TimerBase::SharedPtr recovery_timer_;        ///< 故障恢复延迟定时器（一次性）
 
-  // 电机1参数（速度积分模式）
+  // ===== 电机1 (Yaw) 参数与状态 =====
   std::string motor1_can_interface_;
-  double motor1_max_velocity_;             ///< 遥控器映射最大速度 rad/s
-  int motor1_channel_index_;
-  int motor1_control_rate_;                ///< 控制环频率 Hz
-  double motor1_control_speed_;            ///< CSP 位置跟踪速度 rad/s
-  double motor1_control_acceleration_;     ///< CSP 加速度
-  double motor1_current_velocity_{0.0};    ///< RC 回调更新的当前目标速度 rad/s
-  double motor1_target_position_{0.0};     ///< 积分累加的目标位置 rad
-  bool motor1_target_seeded_{false};
-  std::chrono::steady_clock::time_point motor1_last_time_; ///< 上次控制时间戳
-  bool motor1_last_time_valid_{false};     ///< 时间戳是否已初始化
+  int motor1_control_rate_;
+  double motor1_control_speed_;
+  double motor1_control_acceleration_;
+  double motor1_target_position_{0.0};          ///< 积分/追踪目标位置 rad
+  bool motor1_target_seeded_{false};            ///< 目标位置是否已从电机实际位置初始化
+  std::chrono::steady_clock::time_point motor1_last_time_;
+  bool motor1_last_time_valid_{false};
   double motor1_multi_turn_position_{0.0};
 
-  // 电机2参数（位置映射模式）
+  // ===== 电机2 (Pitch) 参数与状态 =====
   std::string motor2_can_interface_;
   double motor2_min_position_;
   double motor2_max_position_;
-  int motor2_channel_index_;
   double motor2_control_speed_;
   double motor2_control_acceleration_;
+  double motor2_cmd_position_{0.0};            ///< 普通模式下 Pitch 目标位置 rad
+  double motor2_track_target_position_{0.0};   ///< 追踪模式下 Pitch 目标位置 rad（从实际位置播种）
   double motor2_multi_turn_position_{0.0};
 
-  // 通用参数
-  int rc_min_value_;
-  int rc_max_value_;
-  int rc_mid_value_;
-  int deadzone_;
-  double mouse_yaw_sensitivity_;
-  double mouse_pitch_sensitivity_;
-  int mouse_max_speed_;
-  GimbalControlSource gimbal_control_source_{GimbalControlSource::HYBRID};
-  double input_priority_timeout_;
+  // ===== 控制状态（来自 /gimbal/cmd） =====
+  bool tracking_mode_{false};                  ///< 当前是否处于追踪模式
+  double current_yaw_velocity_{0.0};           ///< 普通模式 Yaw 速度指令 rad/s
 
-  // 鼠标输入状态
-  int16_t mouse_x_{0};
-  int16_t mouse_y_{0};
-  rclcpp::Time last_mouse_time_;
-  bool mouse_time_valid_{false};
-  double motor2_mouse_target_position_{0.0};
-  bool motor2_mouse_target_valid_{false};
+  // ===== 指令超时保护 =====
+  rclcpp::Time last_cmd_time_;
+  bool cmd_received_{false};
+  double cmd_timeout_;
 
-  // 追踪模式相关
-  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr switches_subscription_;
-  rclcpp::Subscription<auto_aim_interfaces::msg::Armors>::SharedPtr armors_subscription_;
-  bool tracking_mode_{false};                                       ///< 是否处于追踪模式
-  std::chrono::steady_clock::time_point trigger_release_time_;      ///< trigger松开时间戳
-  bool trigger_release_time_valid_{false};                          ///< trigger松开时间是否有效
-  double track_exit_timeout_;                                       ///< 松开trigger后退出追踪超时 s
+  // ===== Yaw 瞄准偏移校准（硬件参数，追踪模式下叠加在目标位置上） =====
+  double track_yaw_offset_;
 
-  // 增量式PI控制器参数
-  double track_yaw_kp_;                                             ///< Yaw方向比例增益
-  double track_yaw_ki_;                                             ///< Yaw方向积分增益
-  double track_pitch_kp_;                                           ///< Pitch方向比例增益
-  double track_pitch_ki_;                                           ///< Pitch方向积分增益
-  double track_yaw_error_prev_{0.0};                                ///< Yaw方向上一次误差
-  double track_pitch_error_prev_{0.0};                              ///< Pitch方向上一次误差
-  double motor2_track_target_position_{0.0};                        ///< 追踪模式下电机2目标位置
+  // ===== 自动恢复 =====
+  double recovery_cooldown_;                                   ///< 故障恢复冷却时间 s
+  int motor_recv_timeout_ms_;                                  ///< 控制阶段 CAN socket 接收超时 ms
+  bool recovery_in_progress_{false};                          ///< 是否正在等待恢复
+  std::chrono::steady_clock::time_point last_recovery_time_;  ///< 上次触发恢复的时间
+  bool last_recovery_time_valid_{false};                      ///< 上次恢复时间是否有效
 
-  // Yaw瞄准偏移校准
-  double track_yaw_offset_;                                         ///< Yaw瞄准偏移 rad
-
-  // Yaw速度预测前馈
-  double track_yaw_ff_gain_;                                        ///< 前馈增益
-  double track_yaw_ff_filter_;                                      ///< 角速度低通滤波系数
-  double track_yaw_ff_deadzone_;                                    ///< 前馈角速度死区 rad/s
-  double yaw_angular_velocity_filtered_{0.0};                       ///< 滤波后的Yaw角速度 rad/s
-  double yaw_ff_prev_{0.0};                                         ///< 上一次前馈值（增量式更新）
-  std::chrono::steady_clock::time_point track_armors_last_time_;    ///< 上次armors回调时间
-  bool track_armors_time_valid_{false};                             ///< armors时间戳是否有效
-
-  // 弹道下坠补偿参数
-  double bullet_velocity_;                                          ///< 弹丸初速度 m/s
-  double gravity_;                                                  ///< 重力加速度 m/s²
-  bool restart_can_on_startup_{true};                              ///< 启动时是否重启CAN接口
-  int can_bitrate_{1000000};                                       ///< CAN波特率
-  int can_restart_ms_{100};                                        ///< CAN自动恢复时间 ms
-  bool can_use_sudo_{true};                                        ///< CAN重启命令是否使用sudo
-  std::string can_sudo_password_;                                  ///< sudo密码（可选，留空则尝试免密sudo）
-  int init_command_burst_count_{3};                                ///< 初始化指令连发次数
-  int init_command_burst_interval_ms_{5};                          ///< 初始化指令连发间隔 ms
+  // ===== CAN 管理参数 =====
+  bool restart_can_on_startup_;
+  int can_bitrate_;
+  int can_restart_ms_;
+  bool can_use_sudo_;
+  std::string can_sudo_password_;
+  int init_command_burst_count_;
+  int init_command_burst_interval_ms_;
 };
 
 /**
@@ -1222,6 +806,7 @@ int main(int argc, char **argv) {
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
   rclcpp::WallRate loop_rate(200.0);
+
   while (rclcpp::ok()) {
     try {
       executor.spin_some();
@@ -1234,6 +819,5 @@ int main(int argc, char **argv) {
   }
 
   rclcpp::shutdown();
-
   return 0;
 }

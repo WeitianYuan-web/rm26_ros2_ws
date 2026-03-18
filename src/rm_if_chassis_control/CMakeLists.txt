@@ -19,9 +19,13 @@ find_package(std_msgs REQUIRED)
 add_executable(chassis_control_node src/chassis_control_node.cpp)
 ament_target_dependencies(chassis_control_node rclcpp std_msgs)
 
+add_executable(chassis_serial_node src/chassis_serial_node.cpp)
+ament_target_dependencies(chassis_serial_node rclcpp std_msgs)
+
 # 安装目标
 install(TARGETS
   chassis_control_node
+  chassis_serial_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

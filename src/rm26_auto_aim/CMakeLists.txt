@@ -17,6 +17,7 @@ find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(auto_aim_interfaces REQUIRED)
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 
 # ==================== Jetson GPU 加速 (可选) ====================
@@ -48,7 +49,7 @@ set(MVS_LIB_DIR "${MVS_SDK_DIR}/lib/aarch64")
 
 # ==================== auto_aim_node ====================
 add_executable(auto_aim_node src/auto_aim_node.cpp)
-ament_target_dependencies(auto_aim_node rclcpp std_msgs)
+ament_target_dependencies(auto_aim_node rclcpp std_msgs auto_aim_interfaces)
 
 # ==================== hk_camera_node ====================
 add_executable(hk_camera_node src/hk_camera_node.cpp)

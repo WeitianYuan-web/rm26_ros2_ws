@@ -1,7 +1,29 @@
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    control_mode = LaunchConfiguration('control_mode')
+    serial_port = LaunchConfiguration('serial_port')
+    baud_rate = LaunchConfiguration('baud_rate')
+
+    control_mode_arg = DeclareLaunchArgument(
+        'control_mode',
+        default_value='remote',
+        description='底盘发射控制输入源: remote/mouse/hybrid'
+    )
+    serial_port_arg = DeclareLaunchArgument(
+        'serial_port',
+        default_value='/dev/ttyUSB1',
+        description='底盘串口设备'
+    )
+    baud_rate_arg = DeclareLaunchArgument(
+        'baud_rate',
+        default_value='460800',
+        description='底盘串口波特率'
+    )
+
     # 底盘串口通讯节点
     chassis_serial_node = Node(
         package='rm_if_chassis_control',
@@ -9,8 +31,8 @@ def generate_launch_description():
         name='chassis_serial_node',
         output='screen',
         parameters=[
-            {'serial_port': '/dev/ttyUSB0'},
-            {'baud_rate': 460800},
+            {'serial_port': serial_port},
+            {'baud_rate': baud_rate},
         ]
     )
 
@@ -26,14 +48,17 @@ def generate_launch_description():
             {'max_linear_vel': 1.5},
             {'max_angular_vel': 4.0},
             {'min_linear_vel': 1.0},
-            {'fire_control_source': 'hybrid'},
+            {'fire_control_source': control_mode},
             {'input_priority_timeout': 0.3},
             {'deadzone': 2},
-            {'gimbal_yaw_zero_offset': 0.0},
+            {'gimbal_yaw_zero_offset': -1.5758},
         ]
     )
 
     return LaunchDescription([
+        control_mode_arg,
+        serial_port_arg,
+        baud_rate_arg,
         chassis_serial_node,
         chassis_control_node,
     ])

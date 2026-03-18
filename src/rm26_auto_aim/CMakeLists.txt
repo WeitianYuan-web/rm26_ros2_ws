@@ -78,10 +78,33 @@ if(HK_USE_CUDA)
   endif()
 endif()
 
+# ==================== armor_detector_node ====================
+add_executable(armor_detector_node src/armor_detector_node.cpp)
+target_include_directories(armor_detector_node PRIVATE 
+  /usr/local/cuda/include
+  /usr/include/aarch64-linux-gnu
+)
+target_link_directories(armor_detector_node PRIVATE 
+  /usr/local/cuda/lib64
+  /usr/lib/aarch64-linux-gnu
+)
+target_link_libraries(armor_detector_node
+  nvinfer
+  cudart
+)
+ament_target_dependencies(armor_detector_node
+  rclcpp
+  sensor_msgs
+  cv_bridge
+  OpenCV
+  auto_aim_interfaces
+)
+
 # 安装目标
 install(TARGETS
   auto_aim_node
   hk_camera_node
+  armor_detector_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

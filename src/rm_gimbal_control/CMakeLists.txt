@@ -22,7 +22,7 @@ include_directories(include)
 # 添加 gimbal_control_node 可执行文件
 add_executable(gimbal_control_node 
   src/gimbal_control_node.cpp
-  src/motor_cfg.cpp
+  src/rs_05_can_sdk.cpp
 )
 ament_target_dependencies(gimbal_control_node rclcpp std_msgs geometry_msgs)
 

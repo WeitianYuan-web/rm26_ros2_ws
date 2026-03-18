@@ -5,6 +5,14 @@
  */
 
 #include "rm_gimbal_control/rs_05_can_sdk.hpp"
+#include <linux/can.h>
+#include <linux/can/raw.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <cmath>
+#include <iostream>
 
 namespace rs_05_can_sdk {
 
@@ -112,11 +120,11 @@ bool Rs05CanSdk::parseFeedbackFrame(const CanFrame& frame, MotorFeedback& feedba
     feedback.fault_flag = (host_id_part >> 8) & 0x3F;
     
     // 数据区域: 当前角度(0~1)、角速度(2~3)、当前力矩(4~5)以及当前温度(6~7)
-    // 高字节在前，低字节在后 (大端)
-    feedback.angle       = (static_cast<int16_t>(frame.data[0]) << 8) | frame.data[1];
-    feedback.velocity    = (static_cast<int16_t>(frame.data[2]) << 8) | frame.data[3];
-    feedback.torque      = (static_cast<int16_t>(frame.data[4]) << 8) | frame.data[5];
-    feedback.temperature = (static_cast<int16_t>(frame.data[6]) << 8) | frame.data[7];
+    // 根据电机的大端字节序，转成有符号16位整数
+    feedback.angle       = static_cast<int16_t>((frame.data[0] << 8) | frame.data[1]);
+    feedback.velocity    = static_cast<int16_t>((frame.data[2] << 8) | frame.data[3]);
+    feedback.torque      = static_cast<int16_t>((frame.data[4] << 8) | frame.data[5]);
+    feedback.temperature = static_cast<int16_t>((frame.data[6] << 8) | frame.data[7]);
     
     return true;
 }
@@ -254,6 +262,175 @@ CanFrame Rs05CanSdk::buildModProtocolFrame(uint16_t host_id, uint8_t target_id, 
     // 假设修改协议类型也是写在数据首字节
     frame.data[0] = protocol_type;
     return frame;
+}
+
+RsMotorController::RsMotorController(const std::string& iface, uint16_t master_id, uint8_t motor_id) 
+    : iface_(iface), master_id_(master_id), motor_id_(motor_id) {
+    init_socket();
+}
+
+RsMotorController::~RsMotorController() {
+    receive_thread_running_ = false;
+    if (receive_thread_.joinable()) {
+        receive_thread_.join();
+    }
+    if (socket_fd_ >= 0) {
+        close(socket_fd_);
+    }
+}
+
+void RsMotorController::init_socket() {
+    socket_fd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+    if (socket_fd_ < 0) {
+        perror("socket");
+        return;
+    }
+    struct ifreq ifr{};
+    std::strncpy(ifr.ifr_name, iface_.c_str(), IFNAMSIZ - 1);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    if (ioctl(socket_fd_, SIOCGIFINDEX, &ifr) < 0) {
+        perror("ioctl");
+        return;
+    }
+    struct sockaddr_can addr{};
+    addr.can_family = AF_CAN;
+    addr.can_ifindex = ifr.ifr_ifindex;
+    if (bind(socket_fd_, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        return;
+    }
+    // 两条过滤规则：
+    // 规则1：CommType 0x02 实时反馈帧 —— 电机ID 在 Bit15~8
+    // 规则2：CommType 0x11/0x12 读写参数响应帧 —— 电机ID 在 Bit7~0（主机ID 在 Bit15~8）
+    struct can_filter rfilter[2];
+    rfilter[0].can_id   = (static_cast<uint32_t>(motor_id_) << 8) | CAN_EFF_FLAG;
+    rfilter[0].can_mask = (0xFFU << 8) | CAN_EFF_FLAG;
+    rfilter[1].can_id   = static_cast<uint32_t>(motor_id_) | CAN_EFF_FLAG;
+    rfilter[1].can_mask = 0xFFU | CAN_EFF_FLAG;
+    if (setsockopt(socket_fd_, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter)) < 0) {
+        perror("setsockopt filter");
+    }
+}
+
+void RsMotorController::disable_motor(uint8_t clear_error) {
+    auto frame = Rs05CanSdk::buildStopFrame(master_id_, motor_id_);
+    if(clear_error){
+        frame = Rs05CanSdk::buildClearErrorFrame(master_id_, motor_id_);
+    }
+    send_frame(frame);
+}
+
+void RsMotorController::enable_motor() {
+    auto frame = Rs05CanSdk::buildEnableFrame(master_id_, motor_id_);
+    send_frame(frame);
+    
+    // 开启主动上报(通信类型 24 / 0x18)，开启类型 2 实时反馈帧的周期性发送
+    auto report_frame = Rs05CanSdk::buildActiveReportFrame(master_id_, motor_id_, true);
+    send_frame(report_frame);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20)); // wait for motor start
+    
+    // start receiving thread to get motor feedback
+    if (!receive_thread_.joinable()) {
+        receive_thread_running_ = true;
+        receive_thread_ = std::thread(&RsMotorController::receive_loop, this);
+    }
+}
+
+void RsMotorController::set_mode(uint32_t mode) {
+    auto frame = Rs05CanSdk::buildWriteParamFrameInt(master_id_, motor_id_, 0x7005, mode);
+    send_frame(frame);
+}
+
+uint32_t RsMotorController::get_mode() {
+    auto frame = Rs05CanSdk::buildReadParamFrame(master_id_, motor_id_, 0x7005);
+    send_frame(frame);
+    return 0;
+}
+
+double RsMotorController::get_mech_position() {
+    auto frame = Rs05CanSdk::buildReadParamFrame(master_id_, motor_id_, 0x7019);
+    send_frame(frame);
+    return position_.load();
+}
+
+void RsMotorController::set_pos_csp(double speed, double angle) {
+    auto frame_speed = Rs05CanSdk::buildWriteParamFrame(master_id_, motor_id_, 0x7017, speed);
+    send_frame(frame_speed);
+    auto frame_angle = Rs05CanSdk::buildWriteParamFrame(master_id_, motor_id_, 0x7016, angle);
+    send_frame(frame_angle);
+}
+
+void RsMotorController::send_frame(const CanFrame& f) {
+    struct can_frame linux_frame{};
+    linux_frame.can_id = f.id | CAN_EFF_FLAG;
+    linux_frame.can_dlc = f.dlc;
+    std::memcpy(linux_frame.data, f.data, 8);
+    if (write(socket_fd_, &linux_frame, sizeof(linux_frame)) < 0) {
+        // Handle write error silently or log it
+    }
+}
+
+void RsMotorController::receive_loop() {
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 10000; // 10ms timeout
+    setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    
+    while (receive_thread_running_) {
+        struct can_frame frame;
+        ssize_t nbytes = read(socket_fd_, &frame, sizeof(struct can_frame));
+        if (nbytes > 0 && (frame.can_id & CAN_EFF_FLAG)) {
+            CanFrame sdk_frame;
+            sdk_frame.id = frame.can_id & CAN_EFF_MASK;
+            sdk_frame.dlc = frame.can_dlc;
+            std::memcpy(sdk_frame.data, frame.data, 8);
+            
+            uint8_t comm_type_rx;
+            uint16_t host_id_rx;
+            uint8_t target_id_rx;
+            Rs05CanSdk::parseCanId(sdk_frame.id, comm_type_rx, host_id_rx, target_id_rx);
+
+            if (comm_type_rx == static_cast<uint8_t>(CommType::FEEDBACK)) {
+                // CommType 0x02 实时反馈帧
+                // 对于反馈帧：Bit15~8 = 电机ID，Bit7~0 = 主机ID
+                // host_id_rx 实际包含 run_mode(bit23~22) + fault(bit21~16) + motor_id(bit15~8)
+                uint8_t motor_id_in_frame = host_id_rx & 0xFF;
+                if (motor_id_in_frame != motor_id_) {
+                    continue; // 不是本电机的反馈
+                }
+                MotorFeedback feedback;
+                if (Rs05CanSdk::parseFeedbackFrame(sdk_frame, feedback)) {
+                    error_code_.store(feedback.fault_flag);
+                    // 不再在此处进行软件计圈，多圈角度统一通过 0x7019 参数读取获取
+                }
+            } else if (comm_type_rx == static_cast<uint8_t>(CommType::READ_PARAM) ||
+                       comm_type_rx == static_cast<uint8_t>(CommType::WRITE_PARAM)) {
+                // 参数读写应答帧：
+                // 不同固件在 ID 字段上可能存在差异，这里同时兼容
+                // 1) Bit7~0 为电机ID（target_id_rx）
+                // 2) Bit15~8 的低字节为电机ID（host_id_rx & 0xFF）
+                const bool is_this_motor =
+                    (target_id_rx == motor_id_) || (static_cast<uint8_t>(host_id_rx & 0xFF) == motor_id_);
+                if (!is_this_motor) {
+                    continue; // 不是本电机的参数应答
+                }
+                uint16_t index = static_cast<uint16_t>(sdk_frame.data[0]) |
+                                 (static_cast<uint16_t>(sdk_frame.data[1]) << 8);
+                if (index == 0x7019) {
+                    // mechPos 多圈机械角度，小端 float，Byte4~7
+                    uint32_t int_val = static_cast<uint32_t>(sdk_frame.data[4])
+                                     | (static_cast<uint32_t>(sdk_frame.data[5]) << 8)
+                                     | (static_cast<uint32_t>(sdk_frame.data[6]) << 16)
+                                     | (static_cast<uint32_t>(sdk_frame.data[7]) << 24);
+                    float float_val;
+                    std::memcpy(&float_val, &int_val, sizeof(float));
+                    double absolute_pos = static_cast<double>(float_val);
+                    position_.store(absolute_pos);
+                }
+            }
+        }
+    }
 }
 
 } // namespace rs_05_can_sdk

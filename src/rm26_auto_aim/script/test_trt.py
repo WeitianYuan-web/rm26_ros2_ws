@@ -412,7 +412,7 @@ def _print_assessment(avg_fps: float, avg_ms: float, p99_ms: float) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 def parse_args() -> argparse.Namespace:
     script_dir   = Path(__file__).resolve().parent
-    default_eng  = str(script_dir / "../model/yolo26n_rm_500.engine")
+    default_eng  = str(script_dir / "../model/yolo26n_rm_500_n.engine")
 
     parser = argparse.ArgumentParser(
         description="TensorRT engine 推理性能测试  (Jetson Xavier NX)",

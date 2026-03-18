@@ -438,7 +438,7 @@ def _print_done(output_path: str) -> None:
 def parse_args() -> argparse.Namespace:
     """@brief 解析命令行参数。"""
     script_dir = Path(__file__).resolve().parent
-    default_model = str(script_dir / "../model/yolo26n_rm_500.pt")
+    default_model = str(script_dir / "../model/yolo26n_rm_500_n.pt")
 
     parser = argparse.ArgumentParser(
         description="YOLO .pt → TensorRT .engine  (Jetson Xavier NX)",

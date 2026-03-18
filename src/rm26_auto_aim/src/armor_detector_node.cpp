@@ -50,7 +50,7 @@ class ArmorDetectorNode : public rclcpp::Node {
 public:
     ArmorDetectorNode() : Node("armor_detector_node"), engine_loaded_(false) {
         // 参数声明
-        this->declare_parameter<std::string>("engine_path", "src/rm26_auto_aim/model/yolo26n_rm_500.engine");
+        this->declare_parameter<std::string>("engine_path", "src/rm26_auto_aim/model/yolo26n_rm_500_n.engine");
         this->declare_parameter<double>("conf_threshold", 0.5);
         this->declare_parameter<double>("armor_real_width", 0.135); // 默认小装甲板宽度 135mm
         this->declare_parameter<bool>("show_image", true);          // 是否发布可视化图像

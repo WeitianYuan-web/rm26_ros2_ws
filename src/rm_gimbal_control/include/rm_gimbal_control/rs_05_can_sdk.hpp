@@ -10,6 +10,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <atomic>
+#include <thread>
+#include <stdexcept>
 
 namespace rs_05_can_sdk {
 
@@ -220,6 +224,37 @@ public:
      * @return CanFrame 组装好的 CAN 帧
      */
     static CanFrame buildModProtocolFrame(uint16_t host_id, uint8_t target_id, uint8_t protocol_type);
+};
+
+/**
+ * @brief 电机控制器，封装了 CAN 接口的初始化和独立接收线程，并实现了软计圈功能。
+ */
+class RsMotorController {
+public:
+    RsMotorController(const std::string& iface, uint16_t master_id, uint8_t motor_id);
+    ~RsMotorController();
+
+    void init_socket();
+    void disable_motor(uint8_t clear_error = 0);
+    void enable_motor();
+    void set_mode(uint32_t mode);
+    uint32_t get_mode();
+    double get_mech_position();
+    void set_pos_csp(double speed, double angle);
+    void send_frame(const CanFrame& f);
+
+    int socket_fd_{-1};
+    std::string iface_;
+    uint16_t master_id_;
+    uint8_t motor_id_;
+    std::atomic<double> position_{0.0};
+    std::atomic<uint8_t> error_code_{0};
+
+private:
+    void receive_loop();
+
+    std::thread receive_thread_;
+    std::atomic<bool> receive_thread_running_{false};
 };
 
 } // namespace rs_05_can_sdk

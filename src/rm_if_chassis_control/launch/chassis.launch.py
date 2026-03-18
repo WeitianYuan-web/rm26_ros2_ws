@@ -45,8 +45,8 @@ def generate_launch_description():
         parameters=[
             {'max_linear_accel': 4.0},
             {'max_angular_accel': 8.0},
-            {'max_linear_vel': 1.5},
-            {'max_angular_vel': 4.0},
+            {'max_linear_vel': 1.9},
+            {'max_angular_vel': 3.9},
             {'min_linear_vel': 1.0},
             {'fire_control_source': control_mode},
             {'input_priority_timeout': 0.3},

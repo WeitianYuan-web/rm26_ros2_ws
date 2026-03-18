@@ -2,13 +2,12 @@
  * @file gimbal_control_node.cpp
  * @brief 云台底层电机控制节点
  *
- * 负责 Pitch/Yaw 轴电机的初始化、CAN 总线管理与高频驱动。
+ * 负责 Pitch/Yaw 轴电机的初始化与高频驱动。
  * 控制指令由上层 auto_aim_node 通过 /gimbal/cmd 话题下发，本节点不包含任何控制逻辑。
  *
  * /gimbal/cmd 消息格式 (std_msgs/Float64MultiArray):
- *   data[0]: mode       — 0.0=普通模式, 1.0=追踪模式
- *   data[1]: yaw_cmd    — 普通模式: Yaw 速度 (rad/s); 追踪模式: Yaw 位置增量 (rad)
- *   data[2]: pitch_cmd  — 普通模式: Pitch 绝对目标位置 (rad); 追踪模式: Pitch 位置增量 (rad)
+ *   data[0]: Yaw 绝对目标位置 (rad)
+ *   data[1]: Pitch 绝对目标位置 (rad)
  */
 
 #include "rm_gimbal_control/rs_05_can_sdk.hpp"
@@ -21,14 +20,13 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <memory>
-#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -36,102 +34,9 @@
 /**
  * @brief 云台底层电机控制节点
  *
- * 仅负责硬件层：电机初始化、CAN 接口管理、高频 CSP 位置指令下发。
+ * 仅负责硬件层：电机初始化、高频 CSP 位置指令下发。
  * 所有控制逻辑（遥控/鼠标/自瞄 PI）均在 auto_aim_node 中实现。
  */
-class RsMotorController {
-public:
-  RsMotorController(const std::string& iface, uint16_t master_id, uint8_t motor_id) 
-      : iface_(iface), master_id_(master_id), motor_id_(motor_id) {
-    init_socket();
-  }
-
-  ~RsMotorController() {
-    if (socket_fd_ >= 0) close(socket_fd_);
-  }
-
-  void init_socket() {
-    socket_fd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-    if (socket_fd_ < 0) {
-      perror("socket");
-      return;
-    }
-    struct ifreq ifr{};
-    std::strncpy(ifr.ifr_name, iface_.c_str(), IFNAMSIZ);
-    if (ioctl(socket_fd_, SIOCGIFINDEX, &ifr) < 0) {
-      perror("ioctl");
-      return;
-    }
-    struct sockaddr_can addr{};
-    addr.can_family = AF_CAN;
-    addr.can_ifindex = ifr.ifr_ifindex;
-    if (bind(socket_fd_, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-      perror("bind");
-      return;
-    }
-    struct can_filter rfilter[1];
-    rfilter[0].can_id = (motor_id_ << 8) | CAN_EFF_FLAG; // Bit8~Bit15 放电机ID，高位扩展帧标志 (注意旧版逻辑为 motor_id << 8)
-    rfilter[0].can_mask = (0xFF << 8) | CAN_EFF_FLAG;
-    if (setsockopt(socket_fd_, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter)) < 0) {
-      perror("setsockopt filter");
-    }
-  }
-
-  void disable_motor(uint8_t clear_error = 0) {
-    auto frame = rs_05_can_sdk::Rs05CanSdk::buildStopFrame(master_id_, motor_id_);
-    if(clear_error){
-      frame = rs_05_can_sdk::Rs05CanSdk::buildClearErrorFrame(master_id_, motor_id_);
-    }
-    send_frame(frame);
-  }
-
-  void enable_motor() {
-    auto frame = rs_05_can_sdk::Rs05CanSdk::buildEnableFrame(master_id_, motor_id_);
-    send_frame(frame);
-  }
-
-  void set_mode(uint32_t mode) {
-    auto frame = rs_05_can_sdk::Rs05CanSdk::buildWriteParamFrameInt(master_id_, motor_id_, 0x7005, mode);
-    send_frame(frame);
-  }
-
-  uint32_t get_mode() {
-    auto frame = rs_05_can_sdk::Rs05CanSdk::buildReadParamFrame(master_id_, motor_id_, 0x7005);
-    send_frame(frame);
-    // TODO 需补全读取接收
-    return 0;
-  }
-  
-  double get_mech_position() {
-    auto frame = rs_05_can_sdk::Rs05CanSdk::buildReadParamFrame(master_id_, motor_id_, 0x7019);
-    send_frame(frame);
-    // TODO 需补全读取接收
-    return 0.0;
-  }
-
-  void set_pos_csp(double speed, double angle) {
-    auto frame_speed = rs_05_can_sdk::Rs05CanSdk::buildWriteParamFrame(master_id_, motor_id_, 0x7017, speed);
-    send_frame(frame_speed);
-    auto frame_angle = rs_05_can_sdk::Rs05CanSdk::buildWriteParamFrame(master_id_, motor_id_, 0x7016, angle);
-    send_frame(frame_angle);
-  }
-
-  void send_frame(const rs_05_can_sdk::CanFrame& f) {
-    struct can_frame linux_frame{};
-    linux_frame.can_id = f.id | CAN_EFF_FLAG;
-    linux_frame.can_dlc = f.dlc;
-    std::memcpy(linux_frame.data, f.data, 8);
-    write(socket_fd_, &linux_frame, sizeof(linux_frame));
-  }
-
-  int socket_fd_{-1};
-  std::string iface_;
-  uint16_t master_id_;
-  uint8_t motor_id_;
-  double position_{0};
-  uint8_t error_code_{0};
-};
-
 class GimbalControlNode : public rclcpp::Node {
 public:
   /**
@@ -149,6 +54,7 @@ public:
     this->declare_parameter<int>("motor1_control_rate", 200);
     this->declare_parameter<double>("motor1_control_speed", 10.0);
     this->declare_parameter<double>("motor1_control_acceleration", 8.0);
+    this->declare_parameter<double>("motor1_direction_sign", 1.0);
 
     // 电机2 (Pitch轴) 参数
     this->declare_parameter<std::string>("motor2_can_interface", "can0");
@@ -159,7 +65,7 @@ public:
     this->declare_parameter<double>("motor2_control_acceleration", 4.0);
 
     // 通用参数
-    this->declare_parameter<int>("master_id", 0xFF);
+    this->declare_parameter<int>("master_id", 0xFD);
     this->declare_parameter<int>("actuator_type", 5);
 
     // 指令超时保护：超过此时间未收到 /gimbal/cmd 则停止目标更新
@@ -181,12 +87,6 @@ public:
      */
     this->declare_parameter<int>("motor_recv_timeout_ms", 5);
 
-    // CAN 接口管理参数
-    this->declare_parameter<bool>("restart_can_on_startup", true);
-    this->declare_parameter<int>("can_bitrate", 1000000);
-    this->declare_parameter<int>("can_restart_ms", 100);
-    this->declare_parameter<bool>("can_use_sudo", true);
-    this->declare_parameter<std::string>("can_sudo_password", "");
     this->declare_parameter<int>("init_command_burst_count", 3);
     this->declare_parameter<int>("init_command_burst_interval_ms", 5);
 
@@ -194,8 +94,11 @@ public:
     motor1_can_interface_ = this->get_parameter("motor1_can_interface").as_string();
     int motor1_id = this->get_parameter("motor1_id").as_int();
     motor1_control_rate_ = this->get_parameter("motor1_control_rate").as_int();
+    motor1_max_velocity_ = this->get_parameter("motor1_max_velocity").as_double();
     motor1_control_speed_ = this->get_parameter("motor1_control_speed").as_double();
     motor1_control_acceleration_ = this->get_parameter("motor1_control_acceleration").as_double();
+    motor1_direction_sign_ = this->get_parameter("motor1_direction_sign").as_double();
+    motor1_direction_sign_ = (motor1_direction_sign_ >= 0.0) ? 1.0 : -1.0;
 
     motor2_can_interface_ = this->get_parameter("motor2_can_interface").as_string();
     int motor2_id = this->get_parameter("motor2_id").as_int();
@@ -205,7 +108,7 @@ public:
     motor2_control_acceleration_ = this->get_parameter("motor2_control_acceleration").as_double();
 
     int master_id = this->get_parameter("master_id").as_int();
-    int actuator_type = this->get_parameter("actuator_type").as_int();
+    // int actuator_type = this->get_parameter("actuator_type").as_int();
 
     cmd_timeout_ = this->get_parameter("cmd_timeout").as_double();
     recovery_cooldown_ = this->get_parameter("recovery_cooldown").as_double();
@@ -213,26 +116,17 @@ public:
         this->get_parameter("unready_recovery_retry_interval").as_double();
     motor_recv_timeout_ms_ = this->get_parameter("motor_recv_timeout_ms").as_int();
 
-    restart_can_on_startup_ = this->get_parameter("restart_can_on_startup").as_bool();
-    can_bitrate_ = this->get_parameter("can_bitrate").as_int();
-    can_restart_ms_ = this->get_parameter("can_restart_ms").as_int();
-    can_use_sudo_ = this->get_parameter("can_use_sudo").as_bool();
-    can_sudo_password_ = this->get_parameter("can_sudo_password").as_string();
     init_command_burst_count_ = this->get_parameter("init_command_burst_count").as_int();
     init_command_burst_interval_ms_ = this->get_parameter("init_command_burst_interval_ms").as_int();
     if (init_command_burst_count_ < 1) init_command_burst_count_ = 1;
     if (init_command_burst_interval_ms_ < 0) init_command_burst_interval_ms_ = 0;
 
-    if (restart_can_on_startup_) {
-      restart_configured_can_interfaces();
-    }
-
-    motor1_ = std::make_unique<RsMotorController>(
+    motor1_ = std::make_unique<rs_05_can_sdk::RsMotorController>(
         motor1_can_interface_,
         static_cast<uint16_t>(master_id),
         static_cast<uint8_t>(motor1_id));
 
-    motor2_ = std::make_unique<RsMotorController>(
+    motor2_ = std::make_unique<rs_05_can_sdk::RsMotorController>(
         motor2_can_interface_,
         static_cast<uint16_t>(master_id),
         static_cast<uint8_t>(motor2_id));
@@ -240,6 +134,8 @@ public:
     RCLCPP_INFO(this->get_logger(), "云台底层控制节点配置:");
     RCLCPP_INFO(this->get_logger(), "  电机1(Yaw): %s ID=0x%02X, 控制频率=%dHz, 速度=%.2f rad/s",
                 motor1_can_interface_.c_str(), motor1_id, motor1_control_rate_, motor1_control_speed_);
+    RCLCPP_INFO(this->get_logger(), "  电机1(Yaw) 方向符号: %.0f",
+                motor1_direction_sign_);
     RCLCPP_INFO(this->get_logger(), "  电机2(Pitch): %s ID=0x%02X, 范围=[%.2f, %.2f] rad, 速度=%.2f rad/s",
                 motor2_can_interface_.c_str(), motor2_id,
                 motor2_min_position_, motor2_max_position_, motor2_control_speed_);
@@ -270,8 +166,8 @@ public:
         std::chrono::milliseconds(period_ms),
         std::bind(&GimbalControlNode::motor_control_timer_callback, this));
 
-    init_motor(motor1_, motor1_initialized_, "电机1");
-    init_motor(motor2_, motor2_initialized_, "电机2");
+    init_motor(motor1_, motor1_initialized_, motor1_init_in_progress_, "电机1");
+    init_motor(motor2_, motor2_initialized_, motor2_init_in_progress_, "电机2");
 
     RCLCPP_INFO(this->get_logger(), "云台底层控制节点已启动，等待 /gimbal/cmd 指令...");
   }
@@ -321,7 +217,7 @@ private:
    * @param fallback_position 读取失败时的回退值
    * @return 电机机械位置 rad
    */
-  double read_motor_mech_position(std::unique_ptr<RsMotorController> &motor,
+  double read_motor_mech_position(std::unique_ptr<rs_05_can_sdk::RsMotorController> &motor,
                                   const std::string &motor_name,
                                   double fallback_position) {
     if (!motor) {
@@ -339,104 +235,14 @@ private:
   }
 
   /**
-   * @brief 对 shell 单引号内的特殊字符进行转义
-   * @param input 原始字符串
-   * @return 转义后的字符串
-   */
-  std::string shell_single_quote_escape(const std::string &input) {
-    std::string escaped;
-    escaped.reserve(input.size() + 8);
-    for (const char c : input) {
-      if (c == '\'') {
-        escaped += "'\\''";
-      } else {
-        escaped.push_back(c);
-      }
-    }
-    return escaped;
-  }
-
-  /**
-   * @brief 构造带权限提升的 shell 指令（sudo）
-   * @param command 原始命令
-   * @return 完整的可执行命令字符串
-   */
-  std::string build_privileged_command(const std::string &command) {
-    if (!can_use_sudo_) {
-      return command;
-    }
-    if (can_sudo_password_.empty()) {
-      return "sudo -n " + command;
-    }
-    const std::string escaped_password = shell_single_quote_escape(can_sudo_password_);
-    return "bash -lc \"printf '%s\\n' '" + escaped_password +
-           "' | sudo -S -p '' " + command + "\"";
-  }
-
-  /**
-   * @brief 执行 shell 命令
-   * @param command 命令字符串
-   * @return 执行成功返回 true
-   */
-  bool run_shell_command(const std::string &command) {
-    const std::string actual_command = build_privileged_command(command);
-    return std::system(actual_command.c_str()) == 0;
-  }
-
-  /**
-   * @brief 重启单个 CAN 接口并配置波特率与自动恢复
-   * @param interface_name CAN 接口名（如 can0/can1）
-   * @return 执行成功返回 true
-   */
-  bool restart_can_interface(const std::string &interface_name) {
-    if (interface_name.empty()) {
-      return false;
-    }
-    const std::string down_cmd = "ip link set " + interface_name + " down";
-    const std::string config_cmd = "ip link set " + interface_name +
-                                   " type can bitrate " + std::to_string(can_bitrate_) +
-                                   " restart-ms " + std::to_string(can_restart_ms_);
-    const std::string up_cmd = "ip link set " + interface_name + " up";
-
-    RCLCPP_INFO(this->get_logger(), "重启CAN接口 %s: bitrate=%d, restart-ms=%d",
-                interface_name.c_str(), can_bitrate_, can_restart_ms_);
-
-    bool ok = true;
-    if (!run_shell_command(down_cmd)) { ok = false; }
-    if (!run_shell_command(config_cmd)) { ok = false; }
-    if (!run_shell_command(up_cmd)) { ok = false; }
-
-    if (ok) {
-      RCLCPP_INFO(this->get_logger(), "CAN接口 %s 重启完成", interface_name.c_str());
-    } else {
-      RCLCPP_WARN(this->get_logger(), "CAN接口 %s 重启未完全成功（检查权限和接口状态）",
-                  interface_name.c_str());
-    }
-    return ok;
-  }
-
-  /**
-   * @brief 重启本节点使用到的所有 CAN 接口（去重后依次执行）
-   */
-  void restart_configured_can_interfaces() {
-    std::set<std::string> interfaces;
-    interfaces.insert(motor1_can_interface_);
-    interfaces.insert(motor2_can_interface_);
-    for (const auto &iface : interfaces) {
-      if (!iface.empty()) {
-        restart_can_interface(iface);
-      }
-    }
-  }
-
-  /**
    * @brief 异步初始化电机（含超时保护与重试）
    * @param motor 电机对象指针
    * @param initialized 初始化完成标志（原子变量）
    * @param motor_name 电机名称（日志用）
    */
-  void init_motor(std::unique_ptr<RsMotorController> &motor,
+  void init_motor(std::unique_ptr<rs_05_can_sdk::RsMotorController> &motor,
                   std::atomic<bool> &initialized,
+                  std::atomic<bool> &init_in_progress,
                   const std::string &motor_name,
                   std::function<void(bool)> on_finished = {}) {
     if (!motor) {
@@ -446,10 +252,22 @@ private:
       }
       return;
     }
+    if (init_in_progress.exchange(true)) {
+      RCLCPP_WARN(this->get_logger(), "%s初始化已在进行中，跳过重复触发", motor_name.c_str());
+      return;
+    }
     RCLCPP_INFO(this->get_logger(), "正在初始化%s...", motor_name.c_str());
 
-    std::thread init_thread([this, &motor, &initialized, motor_name,
+    std::thread init_thread([this, &motor, &initialized, &init_in_progress, motor_name,
                              on_finished = std::move(on_finished)]() mutable {
+      auto finish_init = [&](bool ok) {
+        initialized = ok;
+        init_in_progress = false;
+        if (on_finished) {
+          on_finished(ok);
+        }
+      };
+
       const int max_retries = 5;
 
       /**
@@ -499,7 +317,7 @@ private:
             RCLCPP_INFO(this->get_logger(),
                         "%s初始化前状态: pos=%.4f rad",
                         motor_name.c_str(),
-                        motor->position_);
+                        motor->position_.load());
           } catch (const std::exception &e) {
             RCLCPP_WARN(this->get_logger(), "%s: 读取初始化前状态失败，继续: %s",
                         motor_name.c_str(), e.what());
@@ -519,20 +337,21 @@ private:
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
           execute_burst([&motor]() { motor->enable_motor(); }, "电机使能");
-          initialized = true;
 
-          double startup_position = motor->position_;
           try {
+            // 发送 mechPos 读取请求，等待 receive_loop 处理响应后再读取位置
             execute_burst([&motor]() { motor->get_mech_position(); }, "读取mechPos");
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
           } catch (const std::exception &e) {
             RCLCPP_WARN(this->get_logger(), "%s: 读取mechPos失败，回退到状态帧位置: %s",
                         motor_name.c_str(), e.what());
           }
 
+          double startup_position = motor->position_.load();
+
           if (motor.get() == motor1_.get()) {
             motor1_target_position_ = startup_position;
             motor1_target_seeded_ = true;
-            motor1_last_time_valid_ = false;
           }
 
           RCLCPP_INFO(this->get_logger(), "%s已使能，启动位置: %.4f rad (%.2f°)",
@@ -545,9 +364,7 @@ private:
                      &ctrl_timeout, sizeof(ctrl_timeout));
           RCLCPP_INFO(this->get_logger(), "%s: CAN接收超时已设置为 %dms（防止控制循环阻塞）",
                       motor_name.c_str(), motor_recv_timeout_ms_);
-          if (on_finished) {
-            on_finished(true);
-          }
+          finish_init(true);
           return;
 
         } catch (const std::exception &e) {
@@ -561,28 +378,11 @@ private:
 
       RCLCPP_ERROR(this->get_logger(), "%s初始化失败（已重试%d次）", motor_name.c_str(), max_retries);
       RCLCPP_ERROR(this->get_logger(), "请检查: 1) CAN接口 2) 电机连接与上电 3) 电机ID");
-      initialized = false;
-      if (on_finished) {
-        on_finished(false);
-      }
+      finish_init(false);
     });
     init_thread.detach();
   }
 
-  /**
-   * @brief 接收来自 auto_aim_node 的云台控制指令
-   *
-   * 消息格式:
-   *   data[0]: mode       — 0.0=普通, 1.0=追踪
-   *   data[1]: yaw_cmd    — 普通:速度(rad/s); 追踪:位置增量(rad)
-   *   data[2]: pitch_cmd  — 普通:绝对位置(rad); 追踪:位置增量(rad)
-   *
-   * 模式切换时：
-   *   普通→追踪: 以电机2当前实际位置为追踪起始点
-   *   追踪→普通: 以电机1当前实际位置为速度积分起始点（避免位置跳变）
-   *
-   * @param msg 控制指令消息
-   */
   /**
    * @brief 控制指令消息回调，接收来自 auto_aim_node 的绝对位置指令
    *
@@ -600,10 +400,10 @@ private:
     }
 
     if (motor1_initialized_ && motor1_) {
-      motor1_target_position_ = msg->data[0];
+      motor1_target_position_ = motor1_direction_sign_ * msg->data[0];
       motor1_target_seeded_ = true;
     }
-    
+
     if (motor2_initialized_ && motor2_) {
       motor2_cmd_position_ = std::max(motor2_min_position_,
                                       std::min(motor2_max_position_, msg->data[1]));
@@ -616,7 +416,7 @@ private:
   /**
    * @brief 触发电机自动恢复（带冷却时间，通过延迟定时器避免在回调内直接阻塞初始化）
    *
-   * 每次故障后等待 recovery_cooldown_ 秒再重新初始化，防止 CAN 总线未稳定时反复重试。
+   * 每次故障后等待 recovery_cooldown_ 秒再重新初始化，防止快速反复重试。
    */
   void trigger_motor_recovery() {
     if (recovery_in_progress_) {
@@ -641,7 +441,7 @@ private:
     last_recovery_time_valid_ = true;
 
     RCLCPP_WARN(this->get_logger(),
-                "电机故障，%.1fs 后自动重新初始化（CAN重启+电机使能）", recovery_cooldown_);
+                "电机故障，%.1fs 后自动重新初始化（电机使能）", recovery_cooldown_);
 
     // 通过一次性定时器延迟执行，避免在主控制回调内长时间阻塞
     recovery_timer_ = this->create_wall_timer(
@@ -649,7 +449,6 @@ private:
         [this]() {
           recovery_timer_.reset();
           RCLCPP_WARN(this->get_logger(), "开始自动重新初始化电机...");
-          restart_configured_can_interfaces();
 
           recovery_jobs_total_ = 2;
           recovery_jobs_done_ = 0;
@@ -671,8 +470,8 @@ private:
             }
           };
 
-          init_motor(motor1_, motor1_initialized_, "电机1", on_job_finished);
-          init_motor(motor2_, motor2_initialized_, "电机2", on_job_finished);
+          init_motor(motor1_, motor1_initialized_, motor1_init_in_progress_, "电机1", on_job_finished);
+          init_motor(motor2_, motor2_initialized_, motor2_init_in_progress_, "电机2", on_job_finished);
         });
   }
 
@@ -689,7 +488,8 @@ private:
   void motor_control_timer_callback() {
     if (!motor1_initialized_ || !motor1_) {
       const auto now = std::chrono::steady_clock::now();
-      if (!recovery_in_progress_) {
+      const bool init_in_progress = motor1_init_in_progress_.load() || motor2_init_in_progress_.load();
+      if (!recovery_in_progress_ && !init_in_progress) {
         const bool can_retry =
             !last_unready_recovery_trigger_time_valid_ ||
             (std::chrono::duration<double>(now - last_unready_recovery_trigger_time_).count() >=
@@ -703,7 +503,8 @@ private:
       }
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                            "电机未就绪%s，跳过控制指令",
-                           recovery_in_progress_ ? "（自动恢复进行中）" : "（等待初始化）");
+                           recovery_in_progress_ ? "（自动恢复进行中）"
+                                                 : (init_in_progress ? "（初始化进行中）" : "（等待初始化）"));
       return;
     }
 
@@ -711,7 +512,7 @@ private:
 
     try {
       if (!motor1_target_seeded_) {
-        motor1_target_position_ = motor1_->position_;
+        motor1_target_position_ = motor1_->position_.load();
         motor1_target_seeded_ = true;
         return;
       }
@@ -720,18 +521,18 @@ private:
       static int health_counter = 0;
       if (++health_counter >= motor1_control_rate_ * 3) {
         health_counter = 0;
-        if (motor1_ && motor1_->error_code_ != 0) {
+        if (motor1_ && motor1_->error_code_.load() != 0) {
           RCLCPP_ERROR(this->get_logger(),
-                       "电机1 故障码 0x%02X，触发自动恢复", motor1_->error_code_);
+                       "电机1 故障码 0x%02X，触发自动恢复", motor1_->error_code_.load());
           motor1_initialized_ = false;
           motor2_initialized_ = false;
           motor1_target_seeded_ = false;
           trigger_motor_recovery();
           return;
         }
-        if (motor2_ && motor2_->error_code_ != 0) {
+        if (motor2_ && motor2_->error_code_.load() != 0) {
           RCLCPP_ERROR(this->get_logger(),
-                       "电机2 故障码 0x%02X，触发自动恢复", motor2_->error_code_);
+                       "电机2 故障码 0x%02X，触发自动恢复", motor2_->error_code_.load());
           motor1_initialized_ = false;
           motor2_initialized_ = false;
           motor1_target_seeded_ = false;
@@ -744,15 +545,26 @@ private:
           ((this->now() - last_cmd_time_).seconds() <= cmd_timeout_);
 
       if (!cmd_active) {
+        // 无有效上层指令时，回贴当前反馈角，避免上电后被旧目标拉动产生自转
+        motor1_target_position_ = motor1_->position_.load();
+        if (motor2_initialized_ && motor2_) {
+          motor2_cmd_position_ = std::max(motor2_min_position_,
+                                          std::min(motor2_max_position_, motor2_->position_.load()));
+        }
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                              "/gimbal/cmd 指令超时，保持当前位置");
       }
 
       // ── 下发电机指令 ──────────────────────────────────────────────────────────
-      motor1_->set_pos_csp(motor1_control_speed_, motor1_target_position_);
+      if (cmd_active) {
+        motor1_->set_pos_csp(motor1_control_speed_, motor1_target_position_);
+
+        if (motor2_initialized_ && motor2_) {
+          motor2_->set_pos_csp(motor2_control_speed_, motor2_cmd_position_);
+        }
+      }
 
       if (motor2_initialized_ && motor2_) {
-        motor2_->set_pos_csp(motor2_control_speed_, motor2_cmd_position_);
         auto msg2 = std_msgs::msg::Float32();
         msg2.data = static_cast<float>(motor2_cmd_position_);
         motor2_target_position_publisher_->publish(msg2);
@@ -760,7 +572,7 @@ private:
 
       // 发布电机1目标位置
       auto msg1 = std_msgs::msg::Float32();
-      msg1.data = static_cast<float>(motor1_target_position_);
+      msg1.data = static_cast<float>(motor1_direction_sign_ * motor1_target_position_);
       motor1_target_position_publisher_->publish(msg1);
 
       // 发布多圈角反馈
@@ -768,7 +580,7 @@ private:
         motor1_multi_turn_position_ = read_motor_mech_position(
             motor1_, "电机1", motor1_multi_turn_position_);
         auto multi1 = std_msgs::msg::Float32();
-        multi1.data = static_cast<float>(motor1_multi_turn_position_);
+        multi1.data = static_cast<float>(motor1_direction_sign_ * motor1_multi_turn_position_);
         motor1_multi_turn_position_publisher_->publish(multi1);
       }
       if (motor2_initialized_ && motor2_) {
@@ -782,12 +594,12 @@ private:
       // 降频日志（每秒一次，含目标-实际偏差供监控）
       static int log_counter = 0;
       if (++log_counter >= motor1_control_rate_) {
-        double pos_err = motor1_target_position_ - motor1_->position_;
+        double pos_err = motor1_target_position_ - motor1_->position_.load();
         RCLCPP_INFO(this->get_logger(),
                     "电机1(控制@%dHz): 目标=%.4f rad, 实际=%.4f rad, 偏差=%.3f rad",
                     motor1_control_rate_,
                     motor1_target_position_,
-                    motor1_->position_,
+                    motor1_->position_.load(),
                     pos_err);
         log_counter = 0;
       }
@@ -808,10 +620,12 @@ private:
   }
 
   // ===== 电机对象 =====
-  std::unique_ptr<RsMotorController> motor1_;
-  std::unique_ptr<RsMotorController> motor2_;
+  std::unique_ptr<rs_05_can_sdk::RsMotorController> motor1_;
+  std::unique_ptr<rs_05_can_sdk::RsMotorController> motor2_;
   std::atomic<bool> motor1_initialized_;
   std::atomic<bool> motor2_initialized_;
+  std::atomic<bool> motor1_init_in_progress_{false};
+  std::atomic<bool> motor2_init_in_progress_{false};
 
   // ===== ROS 通信 =====
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr gimbal_cmd_subscription_;
@@ -825,12 +639,12 @@ private:
   // ===== 电机1 (Yaw) 参数与状态 =====
   std::string motor1_can_interface_;
   int motor1_control_rate_;
+  double motor1_max_velocity_;
   double motor1_control_speed_;
   double motor1_control_acceleration_;
-  double motor1_target_position_{0.0};          ///< 积分/追踪目标位置 rad
+  double motor1_direction_sign_{1.0};           ///< Yaw 逻辑坐标到电机原始坐标的方向符号（+1/-1）
+  double motor1_target_position_{0.0};          ///< Yaw 电机原始目标位置（rad）
   bool motor1_target_seeded_{false};            ///< 目标位置是否已从电机实际位置初始化
-  std::chrono::steady_clock::time_point motor1_last_time_;
-  bool motor1_last_time_valid_{false};
   double motor1_multi_turn_position_{0.0};
 
   // ===== 电机2 (Pitch) 参数与状态 =====
@@ -848,9 +662,6 @@ private:
   bool cmd_received_{false};
   double cmd_timeout_;
 
-  // ===== Yaw 瞄准偏移校准（硬件参数，追踪模式下叠加在目标位置上） =====
-  double track_yaw_offset_;
-
   // ===== 自动恢复 =====
   double recovery_cooldown_;                                   ///< 故障恢复冷却时间 s
   double unready_recovery_retry_interval_;                     ///< 未就绪时主动恢复触发的最小间隔 s
@@ -864,12 +675,6 @@ private:
   int recovery_jobs_done_{0};                                                 ///< 当前恢复批次已完成任务数
   int recovery_jobs_success_{0};                                              ///< 当前恢复批次成功任务数
 
-  // ===== CAN 管理参数 =====
-  bool restart_can_on_startup_;
-  int can_bitrate_;
-  int can_restart_ms_;
-  bool can_use_sudo_;
-  std::string can_sudo_password_;
   int init_command_burst_count_;
   int init_command_burst_interval_ms_;
 };

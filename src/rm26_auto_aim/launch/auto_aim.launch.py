@@ -62,29 +62,29 @@ def generate_launch_description():
     mouse_pitch_sensitivity_arg = DeclareLaunchArgument('mouse_pitch_sensitivity', default_value='0.02')
     mouse_max_speed_arg = DeclareLaunchArgument('mouse_max_speed', default_value='1500')
     input_priority_timeout_arg = DeclareLaunchArgument('input_priority_timeout', default_value='0.3')
-    track_yaw_kp_arg = DeclareLaunchArgument('track_yaw_kp', default_value='0.3')
-    track_yaw_ki_arg = DeclareLaunchArgument('track_yaw_ki', default_value='0.05')
+    track_yaw_kp_arg = DeclareLaunchArgument('track_yaw_kp', default_value='0.6')
+    track_yaw_ki_arg = DeclareLaunchArgument('track_yaw_ki', default_value='0.12')
     track_pitch_kp_arg = DeclareLaunchArgument('track_pitch_kp', default_value='-0.3')
     track_pitch_ki_arg = DeclareLaunchArgument('track_pitch_ki', default_value='-0.05')
-    track_exit_timeout_arg = DeclareLaunchArgument('track_exit_timeout', default_value='0.5')
+    track_exit_timeout_arg = DeclareLaunchArgument('track_exit_timeout', default_value='0.2')
     kf_q_angle_arg = DeclareLaunchArgument('kf_q_angle', default_value='0.01',
                                            description='KF角度过程噪声')
-    kf_q_velocity_arg = DeclareLaunchArgument('kf_q_velocity', default_value='0.1',
+    kf_q_velocity_arg = DeclareLaunchArgument('kf_q_velocity', default_value='15.0',
                                               description='KF角速度过程噪声')
-    kf_r_yaw_arg = DeclareLaunchArgument('kf_r_yaw', default_value='0.005',
+    kf_r_yaw_arg = DeclareLaunchArgument('kf_r_yaw', default_value='0.003',
                                          description='KF Yaw观测噪声')
     kf_r_pitch_arg = DeclareLaunchArgument('kf_r_pitch', default_value='0.005',
                                            description='KF Pitch观测噪声')
-    target_match_threshold_arg = DeclareLaunchArgument('target_match_threshold', default_value='0.3',
+    target_match_threshold_arg = DeclareLaunchArgument('target_match_threshold', default_value='1.0',
                                                        description='目标匹配最大角度误差 rad')
-    target_lost_timeout_arg = DeclareLaunchArgument('target_lost_timeout', default_value='0.3',
+    target_lost_timeout_arg = DeclareLaunchArgument('target_lost_timeout', default_value='0.2',
                                                     description='目标丢失后继续预测时长 s')
     track_yaw_offset_arg = DeclareLaunchArgument('track_yaw_offset', default_value='0.0')
-    track_pitch_offset_arg = DeclareLaunchArgument('track_pitch_offset', default_value='0.05')
-    bullet_velocity_arg = DeclareLaunchArgument('bullet_velocity', default_value='10.0')
+    track_pitch_offset_arg = DeclareLaunchArgument('track_pitch_offset', default_value='0.0')
+    bullet_velocity_arg = DeclareLaunchArgument('bullet_velocity', default_value='15.0')
     gravity_arg = DeclareLaunchArgument('gravity', default_value='9.81')
     aim_offset_x_px_arg = DeclareLaunchArgument('aim_offset_x_px', default_value='-30.0')
-    aim_offset_y_px_arg = DeclareLaunchArgument('aim_offset_y_px', default_value='0.0')
+    aim_offset_y_px_arg = DeclareLaunchArgument('aim_offset_y_px', default_value='-7.0')
 
     # 1. 海康威视相机节点
     hk_camera_node = Node(

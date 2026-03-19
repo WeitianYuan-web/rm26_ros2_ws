@@ -94,9 +94,27 @@ public:
     }
 
     ~ArmorDetectorNode() {
-        if (context_) context_->destroy();
-        if (engine_) engine_->destroy();
-        if (runtime_) runtime_->destroy();
+        if (context_) {
+            #if NV_TENSORRT_MAJOR < 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR < 6)
+            context_->destroy();
+            #else
+            delete context_;
+            #endif
+        }
+        if (engine_) {
+            #if NV_TENSORRT_MAJOR < 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR < 6)
+            engine_->destroy();
+            #else
+            delete engine_;
+            #endif
+        }
+        if (runtime_) {
+            #if NV_TENSORRT_MAJOR < 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR < 6)
+            runtime_->destroy();
+            #else
+            delete runtime_;
+            #endif
+        }
         cudaFree(buffers_[0]);
         cudaFree(buffers_[1]);
     }
@@ -130,12 +148,20 @@ private:
         if (!context_) return false;
 
         // 获取输入输出形状
+        #if NV_TENSORRT_MAJOR < 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR < 5)
         auto input_dims = engine_->getBindingDimensions(0);
+        #else
+        auto input_dims = engine_->getTensorShape(engine_->getIOTensorName(0));
+        #endif
         input_w_ = input_dims.d[3];
         input_h_ = input_dims.d[2];
         input_size_ = input_w_ * input_h_ * 3 * sizeof(float);
 
+        #if NV_TENSORRT_MAJOR < 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR < 5)
         auto output_dims = engine_->getBindingDimensions(1);
+        #else
+        auto output_dims = engine_->getTensorShape(engine_->getIOTensorName(1));
+        #endif
         num_preds_ = output_dims.d[1];
         num_attrs_ = output_dims.d[2];
         output_size_ = num_preds_ * num_attrs_ * sizeof(float);
@@ -195,7 +221,15 @@ private:
 
         // 2. 推理 (GPU)
         checkCudaErrors(cudaMemcpyAsync(buffers_[0], input_data.data(), input_size_, cudaMemcpyHostToDevice, 0));
+        
+        #if NV_TENSORRT_MAJOR < 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR < 5)
         context_->enqueueV2(buffers_, 0, nullptr);
+        #else
+        context_->setTensorAddress(engine_->getIOTensorName(0), buffers_[0]);
+        context_->setTensorAddress(engine_->getIOTensorName(1), buffers_[1]);
+        context_->enqueueV3(0);
+        #endif
+
         checkCudaErrors(cudaMemcpyAsync(output_data_.data(), buffers_[1], output_size_, cudaMemcpyDeviceToHost, 0));
         cudaStreamSynchronize(0);
 

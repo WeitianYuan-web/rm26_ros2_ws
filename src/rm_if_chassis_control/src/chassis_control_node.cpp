@@ -234,11 +234,9 @@ private:
     {
       std::lock_guard<std::mutex> lock(vel_mutex_);
       keyboard_wasd_active_ = active;
-      if (active) {
-        target_vx_ = vx * static_cast<float>(max_linear_vel_);
-        target_vy_ = vy * static_cast<float>(max_linear_vel_);
-        target_vw_ = vw * static_cast<float>(max_angular_vel_);
-      }
+      target_vx_ = vx * static_cast<float>(max_linear_vel_);
+      target_vy_ = vy * static_cast<float>(max_linear_vel_);
+      target_vw_ = vw * static_cast<float>(max_angular_vel_);
     }
 
     channel_received_ = true;

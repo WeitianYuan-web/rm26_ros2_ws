@@ -13,6 +13,16 @@ def generate_launch_description():
     motor1_channel_index = LaunchConfiguration('motor1_channel_index')
     motor2_channel_index = LaunchConfiguration('motor2_channel_index')
     motor1_max_velocity = LaunchConfiguration('motor1_max_velocity')
+    chassis_gyro_compensation_enabled = LaunchConfiguration('chassis_gyro_compensation_enabled')
+    chassis_gyro_compensation_gain = LaunchConfiguration('chassis_gyro_compensation_gain')
+    chassis_gyro_compensation_sign = LaunchConfiguration('chassis_gyro_compensation_sign')
+    chassis_gyro_filter_alpha = LaunchConfiguration('chassis_gyro_filter_alpha')
+    chassis_gyro_apply_in_tracking = LaunchConfiguration('chassis_gyro_apply_in_tracking')
+    chassis_rotation_activation_threshold = LaunchConfiguration('chassis_rotation_activation_threshold')
+    gimbal_gyro_stabilization_enabled = LaunchConfiguration('gimbal_gyro_stabilization_enabled')
+    gimbal_gyro_stabilization_gain = LaunchConfiguration('gimbal_gyro_stabilization_gain')
+    gimbal_gyro_filter_alpha = LaunchConfiguration('gimbal_gyro_filter_alpha')
+    gimbal_gyro_apply_in_tracking = LaunchConfiguration('gimbal_gyro_apply_in_tracking')
     motor2_min_position = LaunchConfiguration('motor2_min_position')
     motor2_max_position = LaunchConfiguration('motor2_max_position')
     motor2_control_speed = LaunchConfiguration('motor2_control_speed')
@@ -55,6 +65,46 @@ def generate_launch_description():
     motor1_channel_index_arg = DeclareLaunchArgument('motor1_channel_index', default_value='0')
     motor2_channel_index_arg = DeclareLaunchArgument('motor2_channel_index', default_value='1')
     motor1_max_velocity_arg = DeclareLaunchArgument('motor1_max_velocity', default_value='8.0')
+    chassis_gyro_compensation_enabled_arg = DeclareLaunchArgument(
+        'chassis_gyro_compensation_enabled', default_value='true',
+        description='是否启用底盘角速度补偿'
+    )
+    chassis_gyro_compensation_gain_arg = DeclareLaunchArgument(
+        'chassis_gyro_compensation_gain', default_value='1.6',
+        description='底盘角速度补偿增益'
+    )
+    chassis_gyro_compensation_sign_arg = DeclareLaunchArgument(
+        'chassis_gyro_compensation_sign', default_value='1.0',
+        description='底盘角速度补偿方向符号（+1 或 -1）'
+    )
+    chassis_gyro_filter_alpha_arg = DeclareLaunchArgument(
+        'chassis_gyro_filter_alpha', default_value='0.2',
+        description='底盘角速度一阶低通滤波 alpha'
+    )
+    chassis_gyro_apply_in_tracking_arg = DeclareLaunchArgument(
+        'chassis_gyro_apply_in_tracking', default_value='false',
+        description='追踪模式中是否应用底盘角速度补偿'
+    )
+    chassis_rotation_activation_threshold_arg = DeclareLaunchArgument(
+        'chassis_rotation_activation_threshold', default_value='0.08',
+        description='仅当底盘角速度绝对值超过该阈值时启用朝向保持(rad/s)'
+    )
+    gimbal_gyro_stabilization_enabled_arg = DeclareLaunchArgument(
+        'gimbal_gyro_stabilization_enabled', default_value='true',
+        description='是否启用云台角速度稳定控制'
+    )
+    gimbal_gyro_stabilization_gain_arg = DeclareLaunchArgument(
+        'gimbal_gyro_stabilization_gain', default_value='-1.8',
+        description='云台角速度稳定增益'
+    )
+    gimbal_gyro_filter_alpha_arg = DeclareLaunchArgument(
+        'gimbal_gyro_filter_alpha', default_value='0.2',
+        description='云台角速度一阶低通滤波 alpha'
+    )
+    gimbal_gyro_apply_in_tracking_arg = DeclareLaunchArgument(
+        'gimbal_gyro_apply_in_tracking', default_value='false',
+        description='追踪模式中是否应用云台角速度稳定控制'
+    )
     motor2_min_position_arg = DeclareLaunchArgument('motor2_min_position', default_value='-0.21')
     motor2_max_position_arg = DeclareLaunchArgument('motor2_max_position', default_value='0.31')
     motor2_control_speed_arg = DeclareLaunchArgument('motor2_control_speed', default_value='4.0')
@@ -133,6 +183,16 @@ def generate_launch_description():
             'motor1_channel_index': motor1_channel_index,
             'motor2_channel_index': motor2_channel_index,
             'motor1_max_velocity': motor1_max_velocity,
+            'chassis_gyro_compensation_enabled': chassis_gyro_compensation_enabled,
+            'chassis_gyro_compensation_gain': chassis_gyro_compensation_gain,
+            'chassis_gyro_compensation_sign': chassis_gyro_compensation_sign,
+            'chassis_gyro_filter_alpha': chassis_gyro_filter_alpha,
+            'chassis_gyro_apply_in_tracking': chassis_gyro_apply_in_tracking,
+            'chassis_rotation_activation_threshold': chassis_rotation_activation_threshold,
+            'gimbal_gyro_stabilization_enabled': gimbal_gyro_stabilization_enabled,
+            'gimbal_gyro_stabilization_gain': gimbal_gyro_stabilization_gain,
+            'gimbal_gyro_filter_alpha': gimbal_gyro_filter_alpha,
+            'gimbal_gyro_apply_in_tracking': gimbal_gyro_apply_in_tracking,
             'motor2_min_position': motor2_min_position,
             'motor2_max_position': motor2_max_position,
             'motor2_control_speed': motor2_control_speed,
@@ -168,6 +228,16 @@ def generate_launch_description():
         motor1_channel_index_arg,
         motor2_channel_index_arg,
         motor1_max_velocity_arg,
+        chassis_gyro_compensation_enabled_arg,
+        chassis_gyro_compensation_gain_arg,
+        chassis_gyro_compensation_sign_arg,
+        chassis_gyro_filter_alpha_arg,
+        chassis_gyro_apply_in_tracking_arg,
+        chassis_rotation_activation_threshold_arg,
+        gimbal_gyro_stabilization_enabled_arg,
+        gimbal_gyro_stabilization_gain_arg,
+        gimbal_gyro_filter_alpha_arg,
+        gimbal_gyro_apply_in_tracking_arg,
         motor2_min_position_arg,
         motor2_max_position_arg,
         motor2_control_speed_arg,

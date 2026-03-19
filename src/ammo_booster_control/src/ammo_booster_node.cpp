@@ -114,7 +114,7 @@ public:
     /* 声明 ROS 参数 */
     this->declare_parameter<std::string>("can_interface", "can2");
     this->declare_parameter<int>("low_speed_rpm", 500);
-    this->declare_parameter<int>("high_speed_rpm", 4500);
+    this->declare_parameter<int>("high_speed_rpm", 6500);
     this->declare_parameter<int>("send_interval_ms", 50);
     this->declare_parameter<int>("recv_interval_ms", 2);
     this->declare_parameter<std::string>("fire_control_source", "hybrid");

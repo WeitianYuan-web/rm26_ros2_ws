@@ -86,6 +86,10 @@ public:
      * 防止定时器回调永久冻结。5ms 在 1Mbps CAN 下对正常电机有充足余量（响应 < 1ms）。
      */
     this->declare_parameter<int>("motor_recv_timeout_ms", 5);
+    this->declare_parameter<double>("motor1_reduction_ratio", 1.0);
+    this->declare_parameter<double>("motor2_reduction_ratio", 1.0);
+    this->declare_parameter<bool>("reconnect_restore_enabled", true);
+    this->declare_parameter<double>("reconnect_restore_output_tolerance", 0.08);
 
     this->declare_parameter<int>("init_command_burst_count", 3);
     this->declare_parameter<int>("init_command_burst_interval_ms", 5);
@@ -115,6 +119,14 @@ public:
     unready_recovery_retry_interval_ =
         this->get_parameter("unready_recovery_retry_interval").as_double();
     motor_recv_timeout_ms_ = this->get_parameter("motor_recv_timeout_ms").as_int();
+    motor1_reduction_ratio_ = this->get_parameter("motor1_reduction_ratio").as_double();
+    motor2_reduction_ratio_ = this->get_parameter("motor2_reduction_ratio").as_double();
+    reconnect_restore_enabled_ = this->get_parameter("reconnect_restore_enabled").as_bool();
+    reconnect_restore_output_tolerance_ =
+        this->get_parameter("reconnect_restore_output_tolerance").as_double();
+    if (motor1_reduction_ratio_ <= 0.0) motor1_reduction_ratio_ = 1.0;
+    if (motor2_reduction_ratio_ <= 0.0) motor2_reduction_ratio_ = 1.0;
+    if (reconnect_restore_output_tolerance_ < 0.0) reconnect_restore_output_tolerance_ = 0.0;
 
     init_command_burst_count_ = this->get_parameter("init_command_burst_count").as_int();
     init_command_burst_interval_ms_ = this->get_parameter("init_command_burst_interval_ms").as_int();
@@ -143,6 +155,11 @@ public:
                 recovery_cooldown_, motor_recv_timeout_ms_);
     RCLCPP_INFO(this->get_logger(), "  未就绪恢复触发间隔: %.1fs",
                 unready_recovery_retry_interval_);
+    RCLCPP_INFO(this->get_logger(),
+                "  重连角度恢复: %s, 减速比[m1=%.3f,m2=%.3f], 输出轴容差=%.4f rad",
+                reconnect_restore_enabled_ ? "开启" : "关闭",
+                motor1_reduction_ratio_, motor2_reduction_ratio_,
+                reconnect_restore_output_tolerance_);
 
     // 发布者：监控目标位置与多圈角
     motor1_target_position_publisher_ = this->create_publisher<std_msgs::msg::Float32>(
@@ -232,6 +249,90 @@ private:
                            motor_name.c_str(), e.what());
       return fallback_position;
     }
+  }
+
+  /**
+   * @brief 在判定故障前缓存当前多圈角，用于重连后尝试恢复
+   */
+  void snapshot_pre_drop_positions() {
+    if (motor1_ && motor1_initialized_) {
+      double v = motor1_multi_turn_position_;
+      if (!std::isfinite(v)) {
+        v = motor1_->position_.load();
+      }
+      motor1_pre_drop_multi_turn_.store(v);
+      motor1_pre_drop_valid_.store(std::isfinite(v));
+    }
+    if (motor2_ && motor2_initialized_) {
+      double v = motor2_multi_turn_position_;
+      if (!std::isfinite(v)) {
+        v = motor2_->position_.load();
+      }
+      motor2_pre_drop_multi_turn_.store(v);
+      motor2_pre_drop_valid_.store(std::isfinite(v));
+    }
+  }
+
+  /**
+   * @brief 尝试在重连后恢复掉线前多圈角
+   *
+   * 恢复判据：将“当前读到的电机角”换算到输出轴角度后，按 2π 周期寻找与掉线前输出轴角最接近的同位角，
+   * 若差值小于容差，认为掉线期间电机仅小幅转动，可安全恢复掉线前多圈角。
+   *
+   * @param motor 电机对象
+   * @param motor_name 电机名称
+   * @param startup_position 重连后读取到的当前多圈角
+   * @param pre_drop_valid 掉线前角度缓存是否有效
+   * @param pre_drop_position 掉线前多圈角
+   * @param reduction_ratio 减速比（电机角/输出轴角）
+   * @return 作为当前逻辑多圈角使用的值（恢复成功则为掉线前角，否则为 startup_position）
+   */
+  double restore_multi_turn_if_needed(
+      std::unique_ptr<rs_05_can_sdk::RsMotorController> &motor,
+      const std::string &motor_name,
+      double startup_position,
+      std::atomic<bool> &pre_drop_valid,
+      std::atomic<double> &pre_drop_position,
+      double reduction_ratio) {
+    if (!motor || !reconnect_restore_enabled_) {
+      pre_drop_valid.store(false);
+      return startup_position;
+    }
+    if (!pre_drop_valid.load()) {
+      return startup_position;
+    }
+    if (reduction_ratio <= 0.0 || !std::isfinite(startup_position)) {
+      pre_drop_valid.store(false);
+      return startup_position;
+    }
+
+    const double pre = pre_drop_position.load();
+    if (!std::isfinite(pre)) {
+      pre_drop_valid.store(false);
+      return startup_position;
+    }
+
+    const double pre_output = pre / reduction_ratio;
+    const double startup_output = startup_position / reduction_ratio;
+    const double cycle = 2.0 * M_PI;
+    const double k = std::round((pre_output - startup_output) / cycle);
+    const double aligned_output = startup_output + k * cycle;
+    const double diff = std::fabs(aligned_output - pre_output);
+
+    pre_drop_valid.store(false);
+
+    if (diff <= reconnect_restore_output_tolerance_) {
+      motor->position_.store(pre);
+      RCLCPP_WARN(this->get_logger(),
+                  "%s重连后恢复多圈角: startup=%.4f -> restore=%.4f rad, 输出轴偏差=%.6f rad",
+                  motor_name.c_str(), startup_position, pre, diff);
+      return pre;
+    }
+
+    RCLCPP_WARN(this->get_logger(),
+                "%s重连后未恢复掉线前多圈角: startup=%.4f, pre_drop=%.4f, 输出轴偏差=%.6f rad(阈值=%.6f)",
+                motor_name.c_str(), startup_position, pre, diff, reconnect_restore_output_tolerance_);
+    return startup_position;
   }
 
   /**
@@ -348,10 +449,24 @@ private:
           }
 
           double startup_position = motor->position_.load();
+          startup_position = (motor.get() == motor1_.get())
+                                 ? restore_multi_turn_if_needed(
+                                       motor, motor_name, startup_position,
+                                       motor1_pre_drop_valid_, motor1_pre_drop_multi_turn_,
+                                       motor1_reduction_ratio_)
+                                 : restore_multi_turn_if_needed(
+                                       motor, motor_name, startup_position,
+                                       motor2_pre_drop_valid_, motor2_pre_drop_multi_turn_,
+                                       motor2_reduction_ratio_);
 
           if (motor.get() == motor1_.get()) {
             motor1_target_position_ = startup_position;
             motor1_target_seeded_ = true;
+            motor1_multi_turn_position_ = startup_position;
+          } else if (motor.get() == motor2_.get()) {
+            motor2_cmd_position_ = std::max(motor2_min_position_,
+                                            std::min(motor2_max_position_, startup_position));
+            motor2_multi_turn_position_ = startup_position;
           }
 
           RCLCPP_INFO(this->get_logger(), "%s已使能，启动位置: %.4f rad (%.2f°)",
@@ -486,7 +601,10 @@ private:
    *   - 超时保护: 超过 cmd_timeout_ 未收到指令，则保持当前目标位置不动。
    */
   void motor_control_timer_callback() {
-    if (!motor1_initialized_ || !motor1_) {
+    const bool motor1_ready = motor1_initialized_ && motor1_;
+    const bool motor2_ready = motor2_initialized_ && motor2_;
+
+    if (!motor1_ready && !motor2_ready) {
       const auto now = std::chrono::steady_clock::now();
       const bool init_in_progress = motor1_init_in_progress_.load() || motor2_init_in_progress_.load();
       if (!recovery_in_progress_ && !init_in_progress) {
@@ -502,37 +620,57 @@ private:
         }
       }
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                           "电机未就绪%s，跳过控制指令",
+                           "双电机均未就绪%s，跳过控制指令",
                            recovery_in_progress_ ? "（自动恢复进行中）"
                                                  : (init_in_progress ? "（初始化进行中）" : "（等待初始化）"));
       return;
     }
 
+    if (!motor1_ready || !motor2_ready) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "部分电机未就绪: motor1=%s, motor2=%s，继续控制可用电机并重试恢复",
+                           motor1_ready ? "OK" : "NOT_READY",
+                           motor2_ready ? "OK" : "NOT_READY");
+      if (!recovery_in_progress_ && !motor1_init_in_progress_.load() && !motor2_init_in_progress_.load()) {
+        const auto now = std::chrono::steady_clock::now();
+        const bool can_retry =
+            !last_unready_recovery_trigger_time_valid_ ||
+            (std::chrono::duration<double>(now - last_unready_recovery_trigger_time_).count() >=
+             unready_recovery_retry_interval_);
+        if (can_retry) {
+          last_unready_recovery_trigger_time_ = now;
+          last_unready_recovery_trigger_time_valid_ = true;
+          trigger_motor_recovery();
+        }
+      }
+    }
+
     last_unready_recovery_trigger_time_valid_ = false;
 
     try {
-      if (!motor1_target_seeded_) {
+      if (motor1_ready && !motor1_target_seeded_) {
         motor1_target_position_ = motor1_->position_.load();
         motor1_target_seeded_ = true;
-        return;
       }
 
       // ── 电机故障码周期性检查（每 3 秒检测一次）──────────────────────────────
       static int health_counter = 0;
       if (++health_counter >= motor1_control_rate_ * 3) {
         health_counter = 0;
-        if (motor1_ && motor1_->error_code_.load() != 0) {
+        if (motor1_ready && motor1_->error_code_.load() != 0) {
           RCLCPP_ERROR(this->get_logger(),
                        "电机1 故障码 0x%02X，触发自动恢复", motor1_->error_code_.load());
+          snapshot_pre_drop_positions();
           motor1_initialized_ = false;
           motor2_initialized_ = false;
           motor1_target_seeded_ = false;
           trigger_motor_recovery();
           return;
         }
-        if (motor2_ && motor2_->error_code_.load() != 0) {
+        if (motor2_ready && motor2_->error_code_.load() != 0) {
           RCLCPP_ERROR(this->get_logger(),
                        "电机2 故障码 0x%02X，触发自动恢复", motor2_->error_code_.load());
+          snapshot_pre_drop_positions();
           motor1_initialized_ = false;
           motor2_initialized_ = false;
           motor1_target_seeded_ = false;
@@ -546,8 +684,10 @@ private:
 
       if (!cmd_active) {
         // 无有效上层指令时，回贴当前反馈角，避免上电后被旧目标拉动产生自转
-        motor1_target_position_ = motor1_->position_.load();
-        if (motor2_initialized_ && motor2_) {
+        if (motor1_ready) {
+          motor1_target_position_ = motor1_->position_.load();
+        }
+        if (motor2_ready) {
           motor2_cmd_position_ = std::max(motor2_min_position_,
                                           std::min(motor2_max_position_, motor2_->position_.load()));
         }
@@ -557,33 +697,37 @@ private:
 
       // ── 下发电机指令 ──────────────────────────────────────────────────────────
       if (cmd_active) {
-        motor1_->set_pos_csp(motor1_control_speed_, motor1_target_position_);
+        if (motor1_ready && motor1_target_seeded_) {
+          motor1_->set_pos_csp(motor1_control_speed_, motor1_target_position_);
+        }
 
-        if (motor2_initialized_ && motor2_) {
+        if (motor2_ready) {
           motor2_->set_pos_csp(motor2_control_speed_, motor2_cmd_position_);
         }
       }
 
-      if (motor2_initialized_ && motor2_) {
+      if (motor2_ready) {
         auto msg2 = std_msgs::msg::Float32();
         msg2.data = static_cast<float>(motor2_cmd_position_);
         motor2_target_position_publisher_->publish(msg2);
       }
 
       // 发布电机1目标位置
-      auto msg1 = std_msgs::msg::Float32();
-      msg1.data = static_cast<float>(motor1_direction_sign_ * motor1_target_position_);
-      motor1_target_position_publisher_->publish(msg1);
+      if (motor1_ready) {
+        auto msg1 = std_msgs::msg::Float32();
+        msg1.data = static_cast<float>(motor1_direction_sign_ * motor1_target_position_);
+        motor1_target_position_publisher_->publish(msg1);
+      }
 
       // 发布多圈角反馈
-      if (motor1_initialized_ && motor1_) {
+      if (motor1_ready) {
         motor1_multi_turn_position_ = read_motor_mech_position(
             motor1_, "电机1", motor1_multi_turn_position_);
         auto multi1 = std_msgs::msg::Float32();
         multi1.data = static_cast<float>(motor1_direction_sign_ * motor1_multi_turn_position_);
         motor1_multi_turn_position_publisher_->publish(multi1);
       }
-      if (motor2_initialized_ && motor2_) {
+      if (motor2_ready) {
         motor2_multi_turn_position_ = read_motor_mech_position(
             motor2_, "电机2", motor2_multi_turn_position_);
         auto multi2 = std_msgs::msg::Float32();
@@ -593,7 +737,7 @@ private:
 
       // 降频日志（每秒一次，含目标-实际偏差供监控）
       static int log_counter = 0;
-      if (++log_counter >= motor1_control_rate_) {
+      if (motor1_ready && ++log_counter >= motor1_control_rate_) {
         double pos_err = motor1_target_position_ - motor1_->position_.load();
         RCLCPP_INFO(this->get_logger(),
                     "电机1(控制@%dHz): 目标=%.4f rad, 实际=%.4f rad, 偏差=%.3f rad",
@@ -606,12 +750,14 @@ private:
 
     } catch (const std::exception &e) {
       RCLCPP_ERROR(this->get_logger(), "电机控制异常: %s", e.what());
+      snapshot_pre_drop_positions();
       motor1_initialized_ = false;
       motor2_initialized_ = false;
       motor1_target_seeded_ = false;
       trigger_motor_recovery();
     } catch (...) {
       RCLCPP_ERROR(this->get_logger(), "电机控制发生未知异常");
+      snapshot_pre_drop_positions();
       motor1_initialized_ = false;
       motor2_initialized_ = false;
       motor1_target_seeded_ = false;
@@ -642,10 +788,13 @@ private:
   double motor1_max_velocity_;
   double motor1_control_speed_;
   double motor1_control_acceleration_;
+  double motor1_reduction_ratio_{1.0};         ///< Yaw 电机减速比（电机角/输出轴角）
   double motor1_direction_sign_{1.0};           ///< Yaw 逻辑坐标到电机原始坐标的方向符号（+1/-1）
   double motor1_target_position_{0.0};          ///< Yaw 电机原始目标位置（rad）
   bool motor1_target_seeded_{false};            ///< 目标位置是否已从电机实际位置初始化
   double motor1_multi_turn_position_{0.0};
+  std::atomic<bool> motor1_pre_drop_valid_{false};   ///< 掉线前多圈角缓存是否有效
+  std::atomic<double> motor1_pre_drop_multi_turn_{0.0};  ///< 掉线前多圈角缓存
 
   // ===== 电机2 (Pitch) 参数与状态 =====
   std::string motor2_can_interface_;
@@ -653,8 +802,11 @@ private:
   double motor2_max_position_;
   double motor2_control_speed_;
   double motor2_control_acceleration_;
+  double motor2_reduction_ratio_{1.0};         ///< Pitch 电机减速比（电机角/输出轴角）
   double motor2_cmd_position_{0.0};            ///< Pitch 目标位置 rad
   double motor2_multi_turn_position_{0.0};
+  std::atomic<bool> motor2_pre_drop_valid_{false};   ///< 掉线前多圈角缓存是否有效
+  std::atomic<double> motor2_pre_drop_multi_turn_{0.0};  ///< 掉线前多圈角缓存
 
   // ===== 控制状态（来自 /gimbal/cmd） =====
   // ===== 指令超时保护 =====
@@ -666,6 +818,8 @@ private:
   double recovery_cooldown_;                                   ///< 故障恢复冷却时间 s
   double unready_recovery_retry_interval_;                     ///< 未就绪时主动恢复触发的最小间隔 s
   int motor_recv_timeout_ms_;                                  ///< 控制阶段 CAN socket 接收超时 ms
+  bool reconnect_restore_enabled_{true};                       ///< 是否启用重连后角度恢复
+  double reconnect_restore_output_tolerance_{0.08};            ///< 重连恢复判据：输出轴角误差阈值 rad
   bool recovery_in_progress_{false};                          ///< 是否正在等待恢复
   std::chrono::steady_clock::time_point last_recovery_time_;  ///< 上次触发恢复的时间
   bool last_recovery_time_valid_{false};                      ///< 上次恢复时间是否有效

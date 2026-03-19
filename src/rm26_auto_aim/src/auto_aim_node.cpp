@@ -19,6 +19,7 @@
 
 #include <auto_aim_interfaces/msg/armors.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
 #include <std_msgs/msg/float32.hpp>
@@ -113,6 +114,19 @@ public:
     this->declare_parameter<int>("motor1_channel_index", 0);
     this->declare_parameter<int>("motor2_channel_index", 1);
     this->declare_parameter<double>("motor1_max_velocity", 8.0);
+    this->declare_parameter<bool>("motor1_position_limit_enabled", true);
+    this->declare_parameter<double>("motor1_min_position", -4.0 * M_PI);
+    this->declare_parameter<double>("motor1_max_position", 4.0 * M_PI);
+    this->declare_parameter<bool>("chassis_gyro_compensation_enabled", true);
+    this->declare_parameter<double>("chassis_gyro_compensation_gain", 1.0);
+    this->declare_parameter<double>("chassis_gyro_compensation_sign", 1.0);
+    this->declare_parameter<double>("chassis_gyro_filter_alpha", 0.9);
+    this->declare_parameter<bool>("chassis_gyro_apply_in_tracking", false);
+    this->declare_parameter<double>("chassis_rotation_activation_threshold", 0.08);
+    this->declare_parameter<bool>("gimbal_gyro_stabilization_enabled", true);
+    this->declare_parameter<double>("gimbal_gyro_stabilization_gain", 1.0);
+    this->declare_parameter<double>("gimbal_gyro_filter_alpha", 0.9);
+    this->declare_parameter<bool>("gimbal_gyro_apply_in_tracking", false);
 
     // 电机2 (Pitch) 限位（用于遥控/鼠标模式下的位置映射与限幅）
     this->declare_parameter<double>("motor2_min_position", -0.21);
@@ -161,6 +175,40 @@ public:
     motor1_channel_index_ = this->get_parameter("motor1_channel_index").as_int();
     motor2_channel_index_ = this->get_parameter("motor2_channel_index").as_int();
     motor1_max_velocity_ = this->get_parameter("motor1_max_velocity").as_double();
+    motor1_position_limit_enabled_ = this->get_parameter("motor1_position_limit_enabled").as_bool();
+    motor1_min_position_ = this->get_parameter("motor1_min_position").as_double();
+    motor1_max_position_ = this->get_parameter("motor1_max_position").as_double();
+    chassis_gyro_compensation_enabled_ =
+        this->get_parameter("chassis_gyro_compensation_enabled").as_bool();
+    chassis_gyro_compensation_gain_ =
+        this->get_parameter("chassis_gyro_compensation_gain").as_double();
+    chassis_gyro_compensation_sign_ =
+        this->get_parameter("chassis_gyro_compensation_sign").as_double();
+    chassis_gyro_compensation_sign_ =
+        (chassis_gyro_compensation_sign_ >= 0.0) ? 1.0 : -1.0;
+    chassis_gyro_filter_alpha_ = this->get_parameter("chassis_gyro_filter_alpha").as_double();
+    chassis_gyro_filter_alpha_ = std::max(0.0, std::min(1.0, chassis_gyro_filter_alpha_));
+    chassis_gyro_apply_in_tracking_ =
+        this->get_parameter("chassis_gyro_apply_in_tracking").as_bool();
+    chassis_rotation_activation_threshold_ =
+        this->get_parameter("chassis_rotation_activation_threshold").as_double();
+    if (chassis_rotation_activation_threshold_ < 0.0) {
+      chassis_rotation_activation_threshold_ = 0.0;
+    }
+    gimbal_gyro_stabilization_enabled_ =
+        this->get_parameter("gimbal_gyro_stabilization_enabled").as_bool();
+    gimbal_gyro_stabilization_gain_ =
+        this->get_parameter("gimbal_gyro_stabilization_gain").as_double();
+    gimbal_gyro_filter_alpha_ = this->get_parameter("gimbal_gyro_filter_alpha").as_double();
+    gimbal_gyro_filter_alpha_ = std::max(0.0, std::min(1.0, gimbal_gyro_filter_alpha_));
+    gimbal_gyro_apply_in_tracking_ =
+        this->get_parameter("gimbal_gyro_apply_in_tracking").as_bool();
+    if (motor1_min_position_ > motor1_max_position_) {
+      RCLCPP_WARN(this->get_logger(),
+                  "motor1_min_position(%.4f) > motor1_max_position(%.4f)，将自动交换",
+                  motor1_min_position_, motor1_max_position_);
+      std::swap(motor1_min_position_, motor1_max_position_);
+    }
 
     motor2_min_position_ = this->get_parameter("motor2_min_position").as_double();
     motor2_max_position_ = this->get_parameter("motor2_max_position").as_double();
@@ -208,6 +256,23 @@ public:
                 kf_q_angle_, kf_q_velocity_, kf_r_yaw_, kf_r_pitch_);
     RCLCPP_INFO(this->get_logger(), "  目标锁定: 匹配阈值=%.2f rad, 丢失超时=%.2f s",
                 target_match_threshold_, target_lost_timeout_);
+    RCLCPP_INFO(this->get_logger(), "  电机1限幅: %s, 范围=[%.4f, %.4f] rad",
+                motor1_position_limit_enabled_ ? "启用" : "关闭",
+                motor1_min_position_, motor1_max_position_);
+    RCLCPP_INFO(this->get_logger(),
+                "  底盘角速度补偿: %s, 增益=%.3f, 符号=%.0f, alpha=%.3f, 旋转触发阈值=%.3frad/s, tracking中%s",
+                chassis_gyro_compensation_enabled_ ? "启用" : "关闭",
+                chassis_gyro_compensation_gain_,
+                chassis_gyro_compensation_sign_,
+                chassis_gyro_filter_alpha_,
+                chassis_rotation_activation_threshold_,
+                chassis_gyro_apply_in_tracking_ ? "启用" : "关闭");
+    RCLCPP_INFO(this->get_logger(),
+                "  云台角速度稳定: %s, 增益=%.3f, alpha=%.3f, tracking中%s",
+                gimbal_gyro_stabilization_enabled_ ? "启用" : "关闭",
+                gimbal_gyro_stabilization_gain_,
+                gimbal_gyro_filter_alpha_,
+                gimbal_gyro_apply_in_tracking_ ? "启用" : "关闭");
     RCLCPP_INFO(this->get_logger(), "  偏移校准: Yaw=%.4f rad, Pitch=%.4f rad",
                 track_yaw_offset_, track_pitch_offset_);
     RCLCPP_INFO(this->get_logger(), "  弹道补偿: 弹速=%.1f m/s, 重力=%.2f m/s²",
@@ -258,6 +323,12 @@ public:
           motor2_actual_position_ = msg->data;
           motor2_actual_valid_ = true;
         });
+    chassis_gyro_z_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+        "/chassis/gyro_z", 20,
+        std::bind(&AutoAimNode::chassis_gyro_callback, this, std::placeholders::_1));
+    gimbal_gyro_z_sub_ = this->create_subscription<std_msgs::msg::Float64>(
+        "/gimbal/gyro_z", 20,
+        std::bind(&AutoAimNode::gimbal_gyro_callback, this, std::placeholders::_1));
 
     // 控制定时器（位置积分 + /gimbal/cmd 发布）
     int period_ms = 1000 / control_rate;
@@ -345,12 +416,19 @@ private:
     return min_pos + normalized * (max_pos - min_pos);
   }
 
+  double clamp_motor1_position(double position) const {
+    if (!motor1_position_limit_enabled_) {
+      return position;
+    }
+    return std::max(motor1_min_position_, std::min(motor1_max_position_, position));
+  }
+
   /**
    * @brief 发布 /gimbal/cmd 绝对位置指令
    */
   void publish_cmd() {
     auto msg = std_msgs::msg::Float64MultiArray();
-    double yaw_cmd = motor1_target_position_;
+    double yaw_cmd = clamp_motor1_position(motor1_target_position_);
     double pitch_cmd = motor2_target_position_;
     if (tracking_mode_) {
       yaw_cmd += track_yaw_offset_;
@@ -374,6 +452,44 @@ private:
     }
     latest_rc_.assign(msg->data.begin(), msg->data.end());
     rc_data_valid_ = true;
+  }
+
+  /**
+   * @brief 底盘角速度回调，一阶低通滤波 /chassis/gyro_z
+   * @param msg 底盘 Z 轴角速度（rad/s）
+   */
+  void chassis_gyro_callback(const std_msgs::msg::Float32::SharedPtr msg) {
+    const double raw = static_cast<double>(msg->data);
+    if (!std::isfinite(raw)) {
+      return;
+    }
+    if (!chassis_gyro_filter_seeded_) {
+      filtered_chassis_gyro_z_ = raw;
+      chassis_gyro_filter_seeded_ = true;
+      return;
+    }
+    filtered_chassis_gyro_z_ =
+        chassis_gyro_filter_alpha_ * raw +
+        (1.0 - chassis_gyro_filter_alpha_) * filtered_chassis_gyro_z_;
+  }
+
+  /**
+   * @brief 云台角速度回调，一阶低通滤波 /gimbal/gyro_z
+   * @param msg 云台 Z 轴角速度（rad/s）
+   */
+  void gimbal_gyro_callback(const std_msgs::msg::Float64::SharedPtr msg) {
+    const double raw = msg->data;
+    if (!std::isfinite(raw)) {
+      return;
+    }
+    if (!gimbal_gyro_filter_seeded_) {
+      filtered_gimbal_gyro_z_ = raw;
+      gimbal_gyro_filter_seeded_ = true;
+      return;
+    }
+    filtered_gimbal_gyro_z_ =
+        gimbal_gyro_filter_alpha_ * raw +
+        (1.0 - gimbal_gyro_filter_alpha_) * filtered_gimbal_gyro_z_;
   }
 
   /**
@@ -417,7 +533,7 @@ private:
         track_pitch_error_prev_    = 0.0;
         RCLCPP_INFO(this->get_logger(), ">>> 进入追踪模式");
         // 立即更新播种位置
-        if (motor1_actual_valid_) motor1_target_position_ = motor1_actual_position_;
+        if (motor1_actual_valid_) motor1_target_position_ = clamp_motor1_position(motor1_actual_position_);
         if (motor2_actual_valid_) motor2_target_position_ = motor2_actual_position_;
         publish_cmd();
       }
@@ -437,7 +553,7 @@ private:
             kf_target_lost_   = false;
             RCLCPP_INFO(this->get_logger(), "<<< 退出追踪模式 (松开 %.1fs)", track_exit_timeout_);
             // 退出时更新播种位置，以防积分跳变
-            if (motor1_actual_valid_) motor1_target_position_ = motor1_actual_position_;
+            if (motor1_actual_valid_) motor1_target_position_ = clamp_motor1_position(motor1_actual_position_);
             if (motor2_actual_valid_) motor2_target_position_ = motor2_actual_position_;
           }
         }
@@ -649,6 +765,7 @@ private:
     track_pitch_error_prev_ = pitch_error;
 
     motor1_target_position_ += yaw_delta;
+    motor1_target_position_ = clamp_motor1_position(motor1_target_position_);
     motor2_target_position_ += pitch_delta;
     motor2_target_position_ = std::max(motor2_min_position_,
                                        std::min(motor2_max_position_, motor2_target_position_));
@@ -697,11 +814,23 @@ private:
     }
 
     if (!motor1_target_seeded_) {
-      motor1_target_position_ = motor1_actual_position_;
+      motor1_target_position_ = clamp_motor1_position(motor1_actual_position_);
       motor2_target_position_ = motor2_actual_position_;
       motor1_target_seeded_ = true;
       return;
     }
+
+    const bool chassis_rotating =
+        std::fabs(filtered_chassis_gyro_z_) >= chassis_rotation_activation_threshold_;
+    const double chassis_feedforward_yaw_velocity =
+        (chassis_gyro_compensation_enabled_ && chassis_rotating)
+            ? (chassis_gyro_compensation_sign_ *
+               chassis_gyro_compensation_gain_ * filtered_chassis_gyro_z_)
+            : 0.0;
+    const double gimbal_stabilize_yaw_velocity =
+        (gimbal_gyro_stabilization_enabled_ && chassis_rotating)
+            ? (-gimbal_gyro_stabilization_gain_ * filtered_gimbal_gyro_z_)
+            : 0.0;
 
     if (!tracking_mode_) {
       const bool mouse_valid = mouse_time_valid_ &&
@@ -722,7 +851,11 @@ private:
       } else if (rc_data_valid_) {
         yaw_velocity = map_rc_to_velocity(latest_rc_[motor1_channel_index_], motor1_max_velocity_);
       }
+      yaw_velocity += chassis_feedforward_yaw_velocity;
+      yaw_velocity += gimbal_stabilize_yaw_velocity;
+      yaw_velocity = std::max(-motor1_max_velocity_, std::min(motor1_max_velocity_, yaw_velocity));
       motor1_target_position_ += yaw_velocity * dt;
+      motor1_target_position_ = clamp_motor1_position(motor1_target_position_);
 
       // 计算 Pitch 目标位置
       if (use_mouse_pitch) {
@@ -734,6 +867,18 @@ private:
       } else if (rc_data_valid_) {
         motor2_target_position_ = map_rc_to_pos(
             latest_rc_[motor2_channel_index_], motor2_min_position_, motor2_max_position_);
+      }
+    } else {
+      double tracking_rate_comp = 0.0;
+      if (chassis_gyro_compensation_enabled_ && chassis_gyro_apply_in_tracking_) {
+        tracking_rate_comp += chassis_feedforward_yaw_velocity;
+      }
+      if (gimbal_gyro_stabilization_enabled_ && gimbal_gyro_apply_in_tracking_) {
+        tracking_rate_comp += gimbal_stabilize_yaw_velocity;
+      }
+      if (tracking_rate_comp != 0.0) {
+        motor1_target_position_ += tracking_rate_comp * dt;
+        motor1_target_position_ = clamp_motor1_position(motor1_target_position_);
       }
     }
 
@@ -749,6 +894,8 @@ private:
   rclcpp::Subscription<auto_aim_interfaces::msg::Armors>::SharedPtr armors_subscription_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr motor1_pos_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr motor2_pos_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr chassis_gyro_z_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr gimbal_gyro_z_sub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   // ===== 遥控器参数 =====
@@ -759,6 +906,19 @@ private:
   int motor1_channel_index_;
   int motor2_channel_index_;
   double motor1_max_velocity_;
+  bool motor1_position_limit_enabled_;
+  double motor1_min_position_;
+  double motor1_max_position_;
+  bool chassis_gyro_compensation_enabled_{true};   ///< 是否启用底盘角速度补偿
+  double chassis_gyro_compensation_gain_{1.0};     ///< 底盘角速度补偿增益
+  double chassis_gyro_compensation_sign_{1.0};     ///< 补偿方向符号（+1/-1）
+  double chassis_gyro_filter_alpha_{0.2};          ///< 底盘角速度低通滤波系数
+  bool chassis_gyro_apply_in_tracking_{false};     ///< 追踪模式中是否应用补偿
+  double chassis_rotation_activation_threshold_{0.08};  ///< 底盘旋转触发阈值(rad/s)
+  bool gimbal_gyro_stabilization_enabled_{true};   ///< 是否启用云台角速度稳定闭环
+  double gimbal_gyro_stabilization_gain_{1.0};     ///< 云台角速度稳定增益
+  double gimbal_gyro_filter_alpha_{0.2};           ///< 云台角速度低通滤波系数
+  bool gimbal_gyro_apply_in_tracking_{false};      ///< 追踪模式中是否应用稳定闭环
 
   // ===== 电机2 限位（本节点用于映射与限幅） =====
   double motor2_min_position_;
@@ -791,6 +951,10 @@ private:
   double motor1_target_position_{0.0};
   double motor2_target_position_{0.0};
   bool motor1_target_seeded_{false};
+  double filtered_chassis_gyro_z_{0.0};            ///< 滤波后的底盘角速度
+  bool chassis_gyro_filter_seeded_{false};         ///< 低通滤波初始化状态
+  double filtered_gimbal_gyro_z_{0.0};             ///< 滤波后的云台角速度
+  bool gimbal_gyro_filter_seeded_{false};          ///< 云台角速度滤波初始化状态
 
   std::chrono::steady_clock::time_point last_time_;
   bool last_time_valid_{false};

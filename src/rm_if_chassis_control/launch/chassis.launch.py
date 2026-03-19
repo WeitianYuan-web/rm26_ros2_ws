@@ -10,8 +10,8 @@ def generate_launch_description():
 
     control_mode_arg = DeclareLaunchArgument(
         'control_mode',
-        default_value='remote',
-        description='底盘发射控制输入源: remote/mouse/hybrid'
+        default_value='hybrid',
+        description='底盘发射控制输入源兜底值: remote/mouse/hybrid（优先由 /vt_remote/switches mode 决定）'
     )
     serial_port_arg = DeclareLaunchArgument(
         'serial_port',

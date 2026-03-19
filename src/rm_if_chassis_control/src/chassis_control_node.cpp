@@ -22,6 +22,7 @@
  *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
  *   - /vt_remote/keyboard  (std_msgs/UInt16)
  *   - /vt_remote/mouse     (std_msgs/Int16MultiArray)
+ *   - /vt_remote/switches  (std_msgs/Int16MultiArray) : [mode, pause, fn_left, fn_right, trigger]
  *   - /vt_remote/key_toggles  (std_msgs/Int16MultiArray) : [pause, fn_left, fn_right, trigger]
  *   - motor1/multi_turn_position (std_msgs/Float32) : 云台 yaw 电机多圈角（电机侧，rad）
  *
@@ -128,6 +129,10 @@ public:
       "/vt_remote/mouse", 10,
       std::bind(&ChassisControlNode::mouseCallback, this, std::placeholders::_1));
 
+    sub_switches_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/switches", 10,
+      std::bind(&ChassisControlNode::switchesCallback, this, std::placeholders::_1));
+
     sub_gimbal_yaw_multi_turn_ = this->create_subscription<std_msgs::msg::Float32>(
       "motor1/multi_turn_position", 10,
       std::bind(&ChassisControlNode::gimbalYawMultiTurnCallback, this, std::placeholders::_1));
@@ -156,6 +161,23 @@ public:
   }
 
 private:
+  /**
+   * @brief 根据 /vt_remote/switches 的 mode 获取当前生效输入源
+   * @return 生效输入源
+   */
+  FireControlSource getActiveFireControlSource() const
+  {
+    if (mode_switch_valid_) {
+      if (mode_switch_ == 0) {
+        return FireControlSource::MOUSE;
+      }
+      if (mode_switch_ == 1) {
+        return FireControlSource::REMOTE;
+      }
+    }
+    return fire_control_source_;
+  }
+
   FireControlSource parseFireControlSource(const std::string & source) const
   {
     if (source == "mouse") return FireControlSource::MOUSE;
@@ -167,6 +189,7 @@ private:
 
   void channelsCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
+    if (getActiveFireControlSource() == FireControlSource::MOUSE) return;
     if (msg->data.size() < 5) return;
     if (keyboard_wasd_active_) return;
 
@@ -187,6 +210,8 @@ private:
 
   void keyboardCallback(const std_msgs::msg::UInt16::SharedPtr msg)
   {
+    if (getActiveFireControlSource() == FireControlSource::REMOTE) return;
+
     const uint16_t kb = msg->data;
     const int w = (kb & KB_W) ? 1 : 0;
     const int s = (kb & KB_S) ? 1 : 0;
@@ -222,7 +247,8 @@ private:
 
   void mouseCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
-    if (fire_control_source_ == FireControlSource::REMOTE) return;
+    const FireControlSource active_source = getActiveFireControlSource();
+    if (active_source == FireControlSource::REMOTE) return;
     if (msg->data.size() < 6) return;
 
     const bool left_pressed = (msg->data[3] != 0);
@@ -277,14 +303,15 @@ private:
 
   void keyTogglesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
-    if (fire_control_source_ == FireControlSource::MOUSE) return;
+    const FireControlSource active_source = getActiveFireControlSource();
+    if (active_source == FireControlSource::MOUSE) return;
     if (msg->data.size() < 4) return;
 
     const bool fn_left_toggle = (msg->data[1] != 0);
     const bool fn_right_toggle = (msg->data[2] != 0);
 
     const bool mouse_override_active =
-      (fire_control_source_ == FireControlSource::HYBRID) &&
+      (active_source == FireControlSource::HYBRID) &&
       mouse_right_toggle_time_valid_ &&
       (this->now() - last_mouse_right_toggle_time_).seconds() < input_priority_timeout_;
 
@@ -318,6 +345,39 @@ private:
       }
     }
     prev_fn_left_toggle_ = fn_left_toggle;
+  }
+
+  /**
+   * @brief 模式开关回调，mode=0 使用 mouse，mode=1 使用 remote
+   * @param msg /vt_remote/switches 消息
+   */
+  void switchesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  {
+    if (msg->data.empty()) {
+      return;
+    }
+
+    const int16_t new_mode = msg->data[0];
+    if (!mode_switch_valid_ || mode_switch_ != new_mode) {
+      mode_switch_ = new_mode;
+      mode_switch_valid_ = true;
+
+      if (mode_switch_ == 1) {
+        std::lock_guard<std::mutex> lock(vel_mutex_);
+        keyboard_wasd_active_ = false;
+      }
+
+      const FireControlSource active_source = getActiveFireControlSource();
+      const char *source_str = "hybrid";
+      if (active_source == FireControlSource::MOUSE) {
+        source_str = "mouse";
+      } else if (active_source == FireControlSource::REMOTE) {
+        source_str = "remote";
+      }
+      RCLCPP_INFO(this->get_logger(),
+                  "mode 已切换为 %d，当前输入源=%s",
+                  mode_switch_, source_str);
+    }
   }
 
   void gimbalYawMultiTurnCallback(const std_msgs::msg::Float32::SharedPtr msg)
@@ -420,6 +480,8 @@ private:
   bool prev_mouse_left_pressed_ = false;
   bool prev_mouse_right_pressed_ = false;
   bool keyboard_wasd_active_ = false;
+  int16_t mode_switch_ = 1;
+  bool mode_switch_valid_ = false;
 
   rclcpp::Time last_channel_time_;
 
@@ -427,6 +489,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_channels_;
   rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr sub_keyboard_;
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_mouse_;
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_switches_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_gimbal_yaw_multi_turn_;
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_command_;

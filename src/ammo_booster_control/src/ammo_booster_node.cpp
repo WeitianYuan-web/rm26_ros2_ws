@@ -6,6 +6,8 @@
  * 订阅遥控器鼠标话题 /vt_remote/mouse，使用鼠标左键按下上升沿切换
  * 发射电机低速 (500 RPM) 和高速 (4500 RPM) 两种模式。
  * 默认启动为低速模式。
+ * 输入源按 /vt_remote/switches 的 mode 动态切换：
+ *   mode=0 -> mouse；mode=1 -> remote。
  *
  * CAN 协议 (与 CtrBoard-H7 通信):
  *   - 发送: ID=0x100, Data[0..1] = int16 速度 (RPM, 大端序)
@@ -59,6 +61,17 @@ enum KeyToggleIndex
   TG_FN_RIGHT = 2,  ///< 自定义按键（右）切换状态
   TG_TRIGGER  = 3,  ///< 扳机切换状态
   TG_COUNT    = 4   ///< 数据总数
+};
+
+/**
+ * @brief switches 数据索引定义
+ *
+ * /vt_remote/switches 话题数据格式:
+ *   [mode, pause, fn_left, fn_right, trigger]
+ */
+enum SwitchIndex
+{
+  SW_MODE = 0
 };
 
 /**
@@ -134,6 +147,9 @@ public:
     sub_key_toggles_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
       "/vt_remote/key_toggles", 10,
       std::bind(&AmmoBoosterNode::keyTogglesCallback, this, std::placeholders::_1));
+    sub_switches_ = this->create_subscription<std_msgs::msg::Int16MultiArray>(
+      "/vt_remote/switches", 10,
+      std::bind(&AmmoBoosterNode::switchesCallback, this, std::placeholders::_1));
 
     pub_feedback_ = this->create_publisher<std_msgs::msg::Int16MultiArray>(
       "/ammo_booster/feedback", 10);
@@ -175,6 +191,23 @@ public:
   }
 
 private:
+  /**
+   * @brief 根据 /vt_remote/switches 的 mode 获取当前生效输入源
+   * @return 生效输入源
+   */
+  FireControlSource getActiveFireControlSource() const
+  {
+    if (mode_switch_valid_) {
+      if (mode_switch_ == 0) {
+        return FireControlSource::MOUSE;
+      }
+      if (mode_switch_ == 1) {
+        return FireControlSource::REMOTE;
+      }
+    }
+    return fire_control_source_;
+  }
+
   // =========================================================================
   //  CAN 接口操作
   // =========================================================================
@@ -316,7 +349,7 @@ private:
    */
   void mouseCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
-    if (fire_control_source_ == FireControlSource::REMOTE) {
+    if (getActiveFireControlSource() == FireControlSource::REMOTE) {
       return;
     }
 
@@ -353,7 +386,8 @@ private:
    */
   void keyTogglesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
   {
-    if (fire_control_source_ == FireControlSource::MOUSE) {
+    const FireControlSource active_source = getActiveFireControlSource();
+    if (active_source == FireControlSource::MOUSE) {
       return;
     }
 
@@ -362,7 +396,7 @@ private:
     }
 
     const bool mouse_priority_active =
-      (fire_control_source_ == FireControlSource::HYBRID) &&
+      (active_source == FireControlSource::HYBRID) &&
       mouse_left_toggle_time_valid_ &&
       (this->now() - last_mouse_left_toggle_time_).seconds() < input_priority_timeout_;
     if (mouse_priority_active) {
@@ -387,6 +421,25 @@ private:
                   current_speed_rpm_);
     }
     prev_fn_right_toggle_ = fn_right_toggle;
+  }
+
+  /**
+   * @brief 模式开关回调，mode=0 使用 mouse，mode=1 使用 remote
+   * @param msg /vt_remote/switches 消息
+   */
+  void switchesCallback(const std_msgs::msg::Int16MultiArray::SharedPtr msg)
+  {
+    if (msg->data.size() <= SW_MODE) {
+      return;
+    }
+    const int16_t new_mode = msg->data[SW_MODE];
+    if (!mode_switch_valid_ || mode_switch_ != new_mode) {
+      mode_switch_ = new_mode;
+      mode_switch_valid_ = true;
+      RCLCPP_INFO(this->get_logger(), "mode 已切换为 %d，当前输入源=%s",
+                  mode_switch_,
+                  fireControlSourceToString(getActiveFireControlSource()));
+    }
   }
 
   /**
@@ -516,6 +569,10 @@ private:
   bool fn_right_toggle_initialized_ = false;
   /** @brief fn_right 上一次切换状态 */
   bool prev_fn_right_toggle_ = false;
+  /** @brief 当前 mode 开关值 */
+  int16_t mode_switch_ = 1;
+  /** @brief 当前 mode 开关是否有效 */
+  bool mode_switch_valid_ = false;
 
   /** @brief 当前目标速度 (RPM) */
   int current_speed_rpm_;
@@ -524,6 +581,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_mouse_;
   /** @brief 遥控器按键切换状态订阅者 */
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_key_toggles_;
+  /** @brief 遥控器开关状态订阅者 */
+  rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr sub_switches_;
   /** @brief 电机反馈发布者 */
   rclcpp::Publisher<std_msgs::msg::Int16MultiArray>::SharedPtr pub_feedback_;
   /** @brief 云台陀螺仪 Z 轴角速度发布者 (rad/s) */

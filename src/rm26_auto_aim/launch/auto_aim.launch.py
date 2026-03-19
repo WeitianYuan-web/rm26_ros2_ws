@@ -40,13 +40,13 @@ def generate_launch_description():
 
     engine_path_arg = DeclareLaunchArgument(
         'engine_path',
-        default_value='/home/linkerhand/RMUL2026/rm26_ros2_ws/src/rm26_auto_aim/model/yolo26n_rm_500.engine',
+        default_value='/home/linkerhand/RMUL2026/rm26_ros2_ws/src/rm26_auto_aim/model/yolo26n_rm_500_n.engine',
         description='TensorRT engine 文件路径'
     )
     gimbal_control_source_arg = DeclareLaunchArgument(
         'gimbal_control_source',
-        default_value='remote',
-        description='自瞄输入源: remote/mouse/hybrid'
+        default_value='hybrid',
+        description='自瞄输入源兜底值: remote/mouse/hybrid（优先由 /vt_remote/switches mode 决定）'
     )
     rc_min_value_arg = DeclareLaunchArgument('rc_min_value', default_value='364')
     rc_max_value_arg = DeclareLaunchArgument('rc_max_value', default_value='1684')
@@ -109,7 +109,7 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[{
             'engine_path': engine_path,
-            'conf_threshold': 0.5,
+            'conf_threshold': 0.2,
             'show_image': False,        # 是否发布 /detector/result_img 以便 rqt 调试
             'armor_real_width': 0.135, # 装甲板真实宽度 (米)
             'aim_offset_x_px': aim_offset_x_px,
@@ -125,7 +125,7 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
         parameters=[{
-            'gimbal_control_source': gimbal_control_source,  # hybrid/remote/mouse
+            'gimbal_control_source': gimbal_control_source,  # 兜底参数，主切换由 /vt_remote/switches mode 决定
             'rc_min_value': rc_min_value,
             'rc_max_value': rc_max_value,
             'rc_mid_value': rc_mid_value,

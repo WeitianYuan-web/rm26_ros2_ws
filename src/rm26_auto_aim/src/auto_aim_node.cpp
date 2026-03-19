@@ -270,6 +270,22 @@ public:
 
 private:
   /**
+   * @brief 根据 /vt_remote/switches 的 mode 获取当前生效输入源
+   * @return 生效输入源
+   */
+  GimbalControlSource get_active_gimbal_control_source() const {
+    if (mode_switch_valid_) {
+      if (mode_switch_ == 0) {
+        return GimbalControlSource::MOUSE;
+      }
+      if (mode_switch_ == 1) {
+        return GimbalControlSource::REMOTE;
+      }
+    }
+    return gimbal_control_source_;
+  }
+
+  /**
    * @brief 解析输入源参数字符串
    * @param source 参数字符串
    * @return 输入源枚举值
@@ -367,7 +383,8 @@ private:
    * @param msg /vt_remote/mouse 消息
    */
   void mouse_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
-    if (gimbal_control_source_ == GimbalControlSource::REMOTE) {
+    const GimbalControlSource active_source = get_active_gimbal_control_source();
+    if (active_source == GimbalControlSource::REMOTE) {
       return;
     }
     if (msg->data.size() < 2) {
@@ -433,7 +450,7 @@ private:
    * @return true 表示“追踪触发键按下”
    */
   bool get_track_button_pressed() const {
-    switch (gimbal_control_source_) {
+    switch (get_active_gimbal_control_source()) {
       case GimbalControlSource::REMOTE:
         return trigger_pressed_;
       case GimbalControlSource::MOUSE:
@@ -467,6 +484,15 @@ private:
   void switches_callback(const std_msgs::msg::Int16MultiArray::SharedPtr msg) {
     if (msg->data.size() < 5) {
       return;
+    }
+    const int16_t new_mode_switch = msg->data[0];
+    if (!mode_switch_valid_ || mode_switch_ != new_mode_switch) {
+      mode_switch_ = new_mode_switch;
+      mode_switch_valid_ = true;
+      RCLCPP_INFO(this->get_logger(),
+                  "mode 已切换为 %d，当前输入源=%s",
+                  mode_switch_,
+                  gimbal_control_source_to_string(get_active_gimbal_control_source()));
     }
     trigger_pressed_ = (msg->data[4] != 0);
     handle_track_button_state(get_track_button_pressed());
@@ -680,12 +706,13 @@ private:
     if (!tracking_mode_) {
       const bool mouse_valid = mouse_time_valid_ &&
           ((now - last_mouse_time_).seconds() <= input_priority_timeout_);
+      const GimbalControlSource active_source = get_active_gimbal_control_source();
       const bool use_mouse_yaw =
-          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid && mouse_x_ != 0);
+          (active_source == GimbalControlSource::MOUSE) ||
+          ((active_source == GimbalControlSource::HYBRID) && mouse_valid && mouse_x_ != 0);
       const bool use_mouse_pitch =
-          (gimbal_control_source_ == GimbalControlSource::MOUSE) ||
-          ((gimbal_control_source_ == GimbalControlSource::HYBRID) && mouse_valid);
+          (active_source == GimbalControlSource::MOUSE) ||
+          ((active_source == GimbalControlSource::HYBRID) && mouse_valid);
 
       // 计算 Yaw 速度并积分
       double yaw_velocity = 0.0;
@@ -770,6 +797,8 @@ private:
 
   // ===== 追踪模式相关 =====
   bool tracking_mode_{false};
+  int16_t mode_switch_{1};
+  bool mode_switch_valid_{false};
   bool trigger_pressed_{false};
   bool keyboard_c_pressed_{false};
   std::chrono::steady_clock::time_point trigger_release_time_;

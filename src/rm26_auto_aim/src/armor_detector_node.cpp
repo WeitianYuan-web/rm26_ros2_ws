@@ -51,11 +51,13 @@ public:
     ArmorDetectorNode() : Node("armor_detector_node"), engine_loaded_(false) {
         // 参数声明
         this->declare_parameter<std::string>("engine_path", "src/rm26_auto_aim/model/yolo26n_rm_500_n.engine");
-        this->declare_parameter<double>("conf_threshold", 0.5);
+        this->declare_parameter<double>("conf_threshold", 0.25);
         this->declare_parameter<double>("armor_real_width", 0.135); // 默认小装甲板宽度 135mm
         this->declare_parameter<bool>("show_image", true);          // 是否发布可视化图像
         this->declare_parameter<double>("aim_offset_x_px", 0.0);
         this->declare_parameter<double>("aim_offset_y_px", 0.0);
+        this->declare_parameter<int>("blue_class_id", 0);
+        this->declare_parameter<int>("red_class_id", 1);
 
         std::string engine_path = this->get_parameter("engine_path").as_string();
         conf_threshold_ = this->get_parameter("conf_threshold").as_double();
@@ -63,6 +65,8 @@ public:
         show_image_ = this->get_parameter("show_image").as_bool();
         aim_offset_x_px_ = this->get_parameter("aim_offset_x_px").as_double();
         aim_offset_y_px_ = this->get_parameter("aim_offset_y_px").as_double();
+        blue_class_id_ = this->get_parameter("blue_class_id").as_int();
+        red_class_id_ = this->get_parameter("red_class_id").as_int();
 
         // 加载 TensorRT Engine
         if (!loadEngine(engine_path)) {
@@ -180,6 +184,11 @@ private:
         
         std::vector<float> input_data(input_w_ * input_h_ * 3);
         int channel_size = input_w_ * input_h_;
+        /**
+         * @brief 通道顺序使用 RGB
+         *
+         * 实测该模型在 RGB 输入下类别更稳定（避免“红目标被标为蓝”）。
+         */
         memcpy(input_data.data() + 0 * channel_size, chw_channels[2].data, channel_size * sizeof(float)); // R
         memcpy(input_data.data() + 1 * channel_size, chw_channels[1].data, channel_size * sizeof(float)); // G
         memcpy(input_data.data() + 2 * channel_size, chw_channels[0].data, channel_size * sizeof(float)); // B
@@ -210,9 +219,13 @@ private:
         // From test script: shape (1, 300, 6), valid = dets[dets[:, 4] > conf]
         // Usually index 0,1,2,3 are x1, y1, x2, y2. Let's assume xyxy format based on python script.
         
+        float max_conf_frame = 0.0f;
         for (int i = 0; i < num_preds_; ++i) {
             float* det = output_data_.data() + i * num_attrs_;
             float conf = det[4];
+            if (conf > max_conf_frame) {
+                max_conf_frame = conf;
+            }
             if (conf > conf_threshold_) {
                 float x1 = det[0] * scale_w;
                 float y1 = det[1] * scale_h;
@@ -220,8 +233,11 @@ private:
                 float y2 = det[3] * scale_h;
                 int cls = static_cast<int>(det[5]);
 
-                // 类别映射: 0='lan'(蓝), 1='hong'(红)
-                std::string color_str = (cls == 0) ? "blue" : "red";
+                // 类别映射（可参数化，避免模型类别顺序变动导致标签颠倒）
+                if (cls != blue_class_id_ && cls != red_class_id_) {
+                    continue;
+                }
+                std::string color_str = (cls == blue_class_id_) ? "blue" : "red";
 
                 float bbox_cx = (x1 + x2) / 2.0f;
                 float bbox_cy = (y1 + y2) / 2.0f;
@@ -250,7 +266,7 @@ private:
                 // 可视化绘制
                 if (show_image_) {
                     cv::Rect box(x1, y1, x2 - x1, y2 - y1);
-                    cv::Scalar color = (cls == 0) ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255);
+                    cv::Scalar color = (cls == blue_class_id_) ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255);
                     cv::rectangle(img, box, color, 2);
                     std::string label = color_str + " " + std::to_string(conf).substr(0, 4);
                     cv::putText(img, label, cv::Point(x1, y1 - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 2);
@@ -260,6 +276,11 @@ private:
                 }
             }
         }
+
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 1000,
+            "[detector] conf_th=%.2f, max_conf=%.3f, armors=%zu",
+            conf_threshold_, max_conf_frame, armors_msg.armors.size());
 
         armors_pub_->publish(armors_msg);
 
@@ -284,6 +305,8 @@ private:
     bool show_image_;
     double aim_offset_x_px_{0.0};
     double aim_offset_y_px_{0.0};
+    int blue_class_id_{0};
+    int red_class_id_{1};
 
     sensor_msgs::msg::CameraInfo::SharedPtr camera_info_;
 

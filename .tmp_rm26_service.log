@@ -1,0 +1,965 @@
+-- Logs begin at Fri 1999-12-31 17:02:04 PST, end at Fri 2026-03-20 02:19:52 PDT. --
+12月 31 17:02:15 jetson systemd[1]: Started RM26 Start All ROS2 Nodes.
+12月 31 17:02:16 jetson python3[1361]: =========================================
+12月 31 17:02:16 jetson python3[1361]:   一键配置 CAN 接口 & USB 串口权限
+12月 31 17:02:16 jetson python3[1361]: =========================================
+12月 31 17:02:16 jetson python3[1361]: [1/5] 加载 CAN 内核模块...
+12月 31 17:02:16 jetson sudo[1368]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1368]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/modprobe can
+12月 31 17:02:16 jetson sudo[1368]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1368]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson sudo[1413]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1413]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/modprobe can_raw
+12月 31 17:02:16 jetson sudo[1413]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1413]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson sudo[1431]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1431]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/modprobe can_dev
+12月 31 17:02:16 jetson sudo[1431]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1431]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson python3[1361]:   -> CAN 内核模块加载完成
+12月 31 17:02:16 jetson python3[1361]: [2/5] 配置 CAN0...
+12月 31 17:02:16 jetson sudo[1448]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1448]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can0 down
+12月 31 17:02:16 jetson sudo[1448]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1448]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson sudo[1463]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1463]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can0 type can bitrate 1000000
+12月 31 17:02:16 jetson sudo[1463]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1463]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson sudo[1477]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1477]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can0 up
+12月 31 17:02:16 jetson sudo[1477]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1477]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson sudo[1498]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1498]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can0 txqueuelen 100
+12月 31 17:02:16 jetson sudo[1498]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1498]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson python3[1361]:   -> can0 配置完成
+12月 31 17:02:16 jetson python3[1361]: [3/5] 配置 CAN1...
+12月 31 17:02:16 jetson sudo[1517]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1517]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can1 down
+12月 31 17:02:16 jetson sudo[1517]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1517]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson sudo[1534]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1534]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can1 type can bitrate 1000000
+12月 31 17:02:16 jetson sudo[1534]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:16 jetson sudo[1534]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:16 jetson sudo[1549]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:16 jetson sudo[1549]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can1 up
+12月 31 17:02:16 jetson sudo[1549]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1549]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson sudo[1570]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:17 jetson sudo[1570]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can1 txqueuelen 100
+12月 31 17:02:17 jetson sudo[1570]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1570]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson python3[1361]:   -> can1 配置完成
+12月 31 17:02:17 jetson python3[1361]: [4/5] 配置 CAN2...
+12月 31 17:02:17 jetson sudo[1590]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:17 jetson sudo[1590]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can2 down
+12月 31 17:02:17 jetson sudo[1590]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1590]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson sudo[1602]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:17 jetson sudo[1602]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can2 type can bitrate 1000000
+12月 31 17:02:17 jetson sudo[1602]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1602]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson sudo[1607]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:17 jetson sudo[1607]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can2 up
+12月 31 17:02:17 jetson sudo[1607]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1607]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson sudo[1619]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:17 jetson sudo[1619]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/ip link set can2 txqueuelen 100
+12月 31 17:02:17 jetson sudo[1619]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1619]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson python3[1361]:   -> can2 配置完成
+12月 31 17:02:17 jetson python3[1361]: [5/5] 配置 USB 串口权限...
+12月 31 17:02:17 jetson sudo[1627]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:17 jetson sudo[1627]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/bin/chmod 666 /dev/ttyUSB0
+12月 31 17:02:17 jetson sudo[1627]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1627]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson sudo[1630]: pam_unix(sudo:account): account linkerhand has password changed in future
+12月 31 17:02:17 jetson sudo[1630]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/bin/chmod 666 /dev/ttyUSB1
+12月 31 17:02:17 jetson sudo[1630]: pam_unix(sudo:session): session opened for user root by (uid=0)
+12月 31 17:02:17 jetson sudo[1630]: pam_unix(sudo:session): session closed for user root
+12月 31 17:02:17 jetson python3[1361]:   -> USB 串口权限配置完成
+12月 31 17:02:17 jetson python3[1361]: =========================================
+12月 31 17:02:17 jetson python3[1361]:   配置结果
+12月 31 17:02:17 jetson python3[1361]: =========================================
+12月 31 17:02:17 jetson python3[1361]: CAN0 状态:
+12月 31 17:02:17 jetson python3[1633]: 4: can0: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state UP mode DEFAULT group default qlen 100
+12月 31 17:02:17 jetson python3[1633]:     link/can
+12月 31 17:02:17 jetson python3[1361]: CAN1 状态:
+12月 31 17:02:17 jetson python3[1635]: 5: can1: <NO-CARRIER,NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state DOWN mode DEFAULT group default qlen 100
+12月 31 17:02:17 jetson python3[1635]:     link/can
+12月 31 17:02:17 jetson python3[1361]: CAN2 状态:
+12月 31 17:02:17 jetson python3[1637]: 6: can2: <NO-CARRIER,NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state DOWN mode DEFAULT group default qlen 100
+12月 31 17:02:17 jetson python3[1637]:     link/can
+12月 31 17:02:17 jetson python3[1361]: USB 串口权限:
+12月 31 17:02:17 jetson python3[1638]: crw-rw-rw- 1 root dialout 188, 0 6月  17  2024 /dev/ttyUSB0
+12月 31 17:02:17 jetson python3[1638]: crw-rw-rw- 1 root dialout 188, 1 6月  17  2024 /dev/ttyUSB1
+12月 31 17:02:17 jetson python3[1361]: =========================================
+12月 31 17:02:17 jetson python3[1361]:   所有配置完成!
+12月 31 17:02:17 jetson python3[1361]: =========================================
+12月 31 17:02:22 jetson python3[1230]: =======================================
+12月 31 17:02:22 jetson python3[1230]:       RM26 一键启动脚本 (Python版)
+12月 31 17:02:22 jetson python3[1230]: =======================================
+12月 31 17:02:22 jetson python3[1230]: [INFO] 正在执行: ./setup.sh
+12月 31 17:02:22 jetson python3[1230]: [INFO] setup.sh 执行完成。
+12月 31 17:02:22 jetson python3[1230]: [INFO] 开始启动 ROS 2 节点...
+12月 31 17:02:22 jetson python3[1230]:  -> 正在启动: vt_remote_node
+12月 31 17:02:22 jetson python3[1230]:  -> 正在启动: gimbal_control_node
+12月 31 17:02:22 jetson python3[1230]:  -> 正在启动: chassis_launch
+12月 31 17:02:22 jetson python3[1230]: [vt_remote_node/ERR] [INFO] [0946688542.801285472] [vt_remote_node]: 串口 /dev/ttyUSB0 已打开
+12月 31 17:02:22 jetson python3[1230]: [vt_remote_node/ERR] [INFO] [0946688542.801833824] [vt_remote_node]: VtRemoteNode 已启动 | 串口: /dev/ttyUSB0 | 波特率: 921600
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.821822368] [gimbal_control_node]: 云台底层控制节点配置:
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.822180960] [gimbal_control_node]:   电机1(Yaw): can0 ID=0x02, 控制频率=200Hz, 速度=12.00 rad/s
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.822356768] [gimbal_control_node]:   电机1(Yaw) 方向符号: 1
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.822424128] [gimbal_control_node]:   电机2(Pitch): can0 ID=0x01, 范围=[-0.21, 0.31] rad, 速度=4.00 rad/s
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.822491712] [gimbal_control_node]:   自动恢复冷却: 5.0s，CAN接收超时: 5ms
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.822552832] [gimbal_control_node]:   未就绪恢复触发间隔: 1.0s
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.822614784] [gimbal_control_node]:   重连角度恢复: 开启, 减速比[m1=1.000,m2=1.000], 输出轴容差=0.0800 rad
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.826646432] [gimbal_control_node]: 正在初始化电机1...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.828071488] [gimbal_control_node]: 正在初始化电机2...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.828500704] [gimbal_control_node]: 电机1: 初始化尝试 1/5 ...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.828947424] [gimbal_control_node]: 电机1: 读取初始化前状态...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.829224864] [gimbal_control_node]: 电机1初始化前状态: pos=0.0000 rad
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.829335648] [gimbal_control_node]: 电机1: 失能电机并清除错误...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.828665088] [gimbal_control_node]: 云台底层控制节点已启动，等待 /gimbal/cmd 指令...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.828789568] [gimbal_control_node]: 电机2: 初始化尝试 1/5 ...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.830847520] [gimbal_control_node]: 电机2: 读取初始化前状态...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.830930048] [gimbal_control_node]: 电机2初始化前状态: pos=0.0000 rad
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688543.830993696] [gimbal_control_node]: 电机2: 失能电机并清除错误...
+12月 31 17:02:23 jetson python3[1230]: [gimbal_control_node/ERR] [WARN] [0946688543.835795648] [gimbal_control_node]: 双电机均未就绪（初始化进行中），跳过控制指令
+12月 31 17:02:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688544.029851808] [gimbal_control_node]: 电机1切换到CSP模式...
+12月 31 17:02:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688544.031508640] [gimbal_control_node]: 电机2切换到CSP模式...
+12月 31 17:02:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688544.201042528] [gimbal_control_node]: 电机1已使能，启动位置: 5.5541 rad (318.23°)
+12月 31 17:02:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688544.201310752] [gimbal_control_node]: 电机1: CAN接收超时已设置为 5ms（防止控制循环阻塞）
+12月 31 17:02:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688544.202589984] [gimbal_control_node]: 电机2已使能，启动位置: 0.0412 rad (2.36°)
+12月 31 17:02:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688544.202785696] [gimbal_control_node]: 电机2: CAN接收超时已设置为 5ms（防止控制循环阻塞）
+12月 31 17:02:24 jetson python3[1230]: [gimbal_control_node/ERR] [WARN] [0946688544.205759552] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+12月 31 17:02:25 jetson python3[1230]:  -> 正在启动: ammo_booster_node
+12月 31 17:02:25 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688545.241014496] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5540 rad, 实际=5.5540 rad, 偏差=0.000 rad
+12月 31 17:02:26 jetson python3[1230]: [gimbal_control_node/ERR] [WARN] [0946688546.210981600] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+12月 31 17:02:26 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688546.305950880] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5539 rad, 实际=5.5539 rad, 偏差=0.000 rad
+12月 31 17:02:27 jetson python3[1230]:  -> 正在启动: auto_aim_launch
+12月 31 17:02:27 jetson python3[1230]: [chassis_launch/OUT] [INFO] [launch]: All log files can be found below /home/linkerhand/.ros/log/1999-12-31-17-02-27-323910-jetson-1945
+12月 31 17:02:27 jetson python3[1230]: [chassis_launch/OUT] [INFO] [launch]: Default logging verbosity is set to INFO
+12月 31 17:02:27 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688547.341028384] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5541 rad, 实际=5.5541 rad, 偏差=0.000 rad
+12月 31 17:02:27 jetson python3[1230]: [vt_remote_node/ERR] [WARN] [0946688547.801978336] [vt_remote_node]: 连接超时：5 秒内未收到有效数据帧
+12月 31 17:02:27 jetson python3[1230]: [chassis_launch/OUT] [INFO] [chassis_serial_node-1]: process started with pid [2273]
+12月 31 17:02:27 jetson python3[1230]: [chassis_launch/OUT] [INFO] [chassis_control_node-2]: process started with pid [2275]
+12月 31 17:02:28 jetson python3[1230]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [0946688548.046083968] [chassis_serial_node]: ChassisSerialNode 已启动 | 串口: /dev/ttyUSB1 | 波特率: 460800 | 频率: 200Hz
+12月 31 17:02:28 jetson python3[1230]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [0946688548.048719968] [chassis_control_node]: ChassisControlNode 已启动 | 控制频率: 200Hz
+12月 31 17:02:28 jetson python3[1230]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [0946688548.049045568] [chassis_control_node]: 限制参数: 线加速度=10.00 角加速度=16.00 | 线速度=1.00~2.00 角速度=4.00 | 死区: 2
+12月 31 17:02:28 jetson python3[1230]: [gimbal_control_node/ERR] [WARN] [0946688548.215777888] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+12月 31 17:02:28 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688548.346381856] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5541 rad, 实际=5.5541 rad, 偏差=0.000 rad
+12月 31 17:02:28 jetson python3[1230]: =======================================
+12月 31 17:02:28 jetson python3[1230]:   所有节点已启动！按 Ctrl+C 可一键安全退出
+12月 31 17:02:28 jetson python3[1230]: =======================================
+12月 31 17:02:28 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [0946688548.861671776] [ammo_booster_node]: CAN 接口 can2 已初始化
+12月 31 17:02:28 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [0946688548.870089472] [ammo_booster_node]: AmmoBoosterNode 已启动 | CAN: can2 | 低速: 500 RPM | 高速: 6500 RPM | 发送周期: 50 ms | 接收周期: 2 ms
+12月 31 17:02:28 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [0946688548.870291296] [ammo_booster_node]: 当前模式: 低速 (500 RPM)
+12月 31 17:02:28 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [0946688548.870353824] [ammo_booster_node]: 发射控制输入源: hybrid
+12月 31 17:02:29 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688549.346040864] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5541 rad, 实际=5.5541 rad, 偏差=0.000 rad
+12月 31 17:02:30 jetson python3[1230]: [gimbal_control_node/ERR] [WARN] [0946688550.220707520] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [INFO] [launch]: All log files can be found below /home/linkerhand/.ros/log/1999-12-31-17-02-30-252909-jetson-2221
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [INFO] [launch]: Default logging verbosity is set to INFO
+12月 31 17:02:30 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688550.346030368] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5541 rad, 实际=5.5541 rad, 偏差=0.000 rad
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [INFO] [hk_camera_node-1]: process started with pid [2319]
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [INFO] [armor_detector_node-2]: process started with pid [2321]
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [INFO] [auto_aim_node-3]: process started with pid [2323]
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [ERROR] [hk_camera_node-1]: process has died [pid 2319, exit code 127, cmd '/home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/hk_camera_node --ros-args -r __node:=hk_camera_node --params-file /tmp/launch_params_1w4iki9e'].
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [hk_camera_node-1] /home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/hk_camera_node: error while loading shared libraries: libMvCameraControl.so: cannot open shared object file: No such file or directory
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.825112544] [auto_aim_node]: 自动瞄准控制节点配置:
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.825494656] [auto_aim_node]:   遥控: RC范围364~1684(中值1024), ch0/ch1, 死区2
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.825595808] [auto_aim_node]:   鼠标: yaw灵敏度=0.0200, pitch灵敏度=0.0200, 限幅=1500, 优先窗口=0.30s
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.825692352] [auto_aim_node]:   输入源: hybrid
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.825761152] [auto_aim_node]:   追踪PI: Yaw(Kp=0.60,Ki=0.12), Pitch(Kp=-0.30,Ki=-0.05), 退出=0.2s
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.825877984] [auto_aim_node]:   KF: q_angle=0.0100, q_vel=15.0000, r_yaw=0.0030, r_pitch=0.0050
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.826129888] [auto_aim_node]:   目标锁定: 匹配阈值=1.00 rad, 丢失超时=0.20 s
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.826279200] [auto_aim_node]:   电机1限幅: 启用, 范围=[-12.5664, 12.5664] rad
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.826578112] [auto_aim_node]:   底盘角速度补偿: 启用, 增益=1.000, 符号=1, alpha=0.100, 旋转触发阈值=0.080rad/s, tracking中关闭
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.826676096] [auto_aim_node]:   云台角速度稳定: 启用, 增益=-4.400, alpha=0.100, tracking中关闭
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.826856128] [auto_aim_node]:   偏移校准: Yaw=0.0000 rad, Pitch=0.0000 rad
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.826937824] [auto_aim_node]:   弹道补偿: 弹速=15.0 m/s, 重力=9.81 m/s²
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [0946688550.842709376] [auto_aim_node]: 自动瞄准控制节点已启动，控制频率=200Hz
+12月 31 17:02:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [WARN] [0946688550.853098816] [auto_aim_node]: 等待电机实际位置反馈...
+12月 31 17:02:31 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688551.350856000] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5540 rad, 实际=5.5540 rad, 偏差=0.000 rad
+12月 31 17:02:32 jetson python3[1230]: [gimbal_control_node/ERR] [WARN] [0946688552.225706944] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+12月 31 17:02:32 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [0946688552.355893344] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+12月 31 17:02:32 jetson python3[1230]: [auto_aim_launch/OUT] [armor_detector_node-2] [INFO] [0946688552.445165120] [armor_detector_node]: Skipped Ultralytics metadata header (size: 541)
+3月 20 02:06:40 jetson python3[1230]: [gimbal_control_node/ERR] [WARN] [1773997600.486344113] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+3月 20 02:06:40 jetson python3[1230]: [chassis_launch/OUT] [chassis_serial_node-1] [WARN] [1773997600.486957137] [chassis_serial_node]: MCU 反馈超时：3 秒内未收到有效反馈帧
+3月 20 02:06:40 jetson python3[1230]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773997600.491995185] [chassis_serial_node]: 反馈帧恢复接收
+3月 20 02:06:40 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997600.796551601] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:06:41 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997601.841633841] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:06:42 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997602.886740337] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:06:43 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997603.936621969] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:06:44 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997604.951733553] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:06:45 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997605.986663729] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:06:47 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997607.066629713] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:06:48 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997608.088989969] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:06:49 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997609.089264977] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:06:50 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997610.118803601] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:06:51 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997611.140197873] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:06:52 jetson python3[1230]: [auto_aim_launch/OUT] [armor_detector_node-2] [INFO] [1773997612.031706481] [armor_detector_node]: ArmorDetectorNode started.
+3月 20 02:06:52 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997612.140230673] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:06:53 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997613.140264945] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:06:54 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997614.140237617] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:06:55 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997615.140292241] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:06:56 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997616.140225041] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:06:57 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997617.140222353] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5539 rad, 偏差=0.000 rad
+3月 20 02:06:58 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997618.140228337] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:06:59 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997619.140217585] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:00 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997620.140267505] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:07:01 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997621.140265233] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:07:02 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997622.140403281] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:03 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997623.140305681] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:04 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997624.140207601] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:07:05 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997625.140609201] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5516 rad, 偏差=0.003 rad
+3月 20 02:07:06 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997626.140201745] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5566 rad, 偏差=-0.002 rad
+3月 20 02:07:07 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997627.140271825] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5562 rad, 偏差=-0.002 rad
+3月 20 02:07:08 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997628.140527057] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:09 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997629.140465521] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:10 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997630.140181905] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:11 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997631.140238545] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5539 rad, 偏差=0.000 rad
+3月 20 02:07:12 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997632.140204561] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:07:13 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997633.140219921] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:14 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997634.140171924] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5540 rad, 偏差=0.000 rad
+3月 20 02:07:15 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997635.145177748] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:16 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997636.150142538] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:17 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997637.150265533] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:07:18 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997638.150192903] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:07:19 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997639.155261481] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:20 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997640.155240235] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:21 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997641.160688250] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:22 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997642.165264096] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:07:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997643.165228023] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997644.170210764] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:25 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997645.170219072] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:25 jetson python3[1230]: [vt_remote_node/ERR] [INFO] [1773997645.741110194] [vt_remote_node]: 数据帧恢复接收
+3月 20 02:07:26 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997646.170221123] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:07:26 jetson python3[1230]: [vt_remote_node/ERR] [WARN] [1773997646.484798420] [vt_remote_node]: 启动回中校验未通过，暂不发布控制话题。请保持摇杆/拨轮回中：ch0=1024 ch1=1024 ch2=1069 ch3=1024 wheel=1024 (mid=1024 tol=+-30)
+3月 20 02:07:27 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997647.175238505] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:27 jetson python3[1230]: [vt_remote_node/ERR] [WARN] [1773997647.488265878] [vt_remote_node]: 启动回中校验未通过，暂不发布控制话题。请保持摇杆/拨轮回中：ch0=1024 ch1=1024 ch2=364 ch3=1024 wheel=1024 (mid=1024 tol=+-30)
+3月 20 02:07:28 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997648.175413084] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:07:28 jetson python3[1230]: [vt_remote_node/ERR] [WARN] [1773997648.491922956] [vt_remote_node]: 启动回中校验未通过，暂不发布控制话题。请保持摇杆/拨轮回中：ch0=1024 ch1=1024 ch2=1024 ch3=1684 wheel=1024 (mid=1024 tol=+-30)
+3月 20 02:07:29 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997649.175224641] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:30 jetson python3[1230]: [vt_remote_node/ERR] [INFO] [1773997650.070141487] [vt_remote_node]: 启动回中校验通过（保持中点 1.00 秒），开始正常发布控制话题
+3月 20 02:07:30 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [1773997650.071495904] [ammo_booster_node]: 鼠标左键状态变化 -> 切换至低速模式 (500 RPM)
+3月 20 02:07:30 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [1773997650.072031519] [ammo_booster_node]: mode 已切换为 1，当前输入源=remote
+3月 20 02:07:30 jetson python3[1230]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773997650.071591876] [chassis_control_node]: mode 已切换为 1，当前输入源=remote
+3月 20 02:07:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997650.075407745] [auto_aim_node]: mode 已切换为 1，当前输入源=remote
+3月 20 02:07:30 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997650.185357441] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:31 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997651.185377138] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:32 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997652.185237708] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:33 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997653.185190519] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:34 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997654.185227209] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997655.185264606] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:36 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997656.185196701] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:07:37 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997657.190240754] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:38 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997658.245180146] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:39 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997659.245165750] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:07:40 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997660.245250282] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:07:41 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997661.245216496] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:42 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997662.245213256] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:43 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997663.245218773] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:44 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997664.245194452] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:45 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997665.245236913] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:46 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997666.245479340] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:47 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997667.255241827] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:07:48 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997668.255252037] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:07:49 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997669.260201910] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:07:50 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997670.260233789] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:07:51 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997671.270293238] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5540 rad, 偏差=0.000 rad
+3月 20 02:07:52 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997672.270218096] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:53 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997673.285194323] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:54 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997674.285255684] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:55 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997675.285545236] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:07:56 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997676.295196503] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:07:57 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997677.295254218] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:07:58 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997678.295217592] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:07:59 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997679.330254584] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:08:00 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997680.330272029] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:01 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997681.330238223] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:02 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997682.330283541] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:08:03 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997683.350529843] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:04 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997684.350227998] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:05 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997685.350403556] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:08:06 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997686.350390855] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:08:07 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997687.350163857] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:08 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997688.370220424] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:09 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997689.370240116] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:10 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997690.370258572] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:08:11 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997691.370222566] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:12 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997692.370184192] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:13 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997693.405268776] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:14 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997694.405204818] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:15 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997695.405265117] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:16 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997696.405223530] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5539 rad, 偏差=0.000 rad
+3月 20 02:08:17 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997697.405254955] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:18 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997698.405234043] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:19 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997699.405227432] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:20 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997700.406079716] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:08:21 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997701.435464642] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:08:22 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997702.435231954] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:08:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997703.435243766] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:08:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997704.435277359] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:25 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997705.435250794] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:26 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997706.435212753] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:08:27 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997707.435253109] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:08:28 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997708.435244903] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:29 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997709.435244403] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:30 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997710.435285738] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:08:31 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997711.485207752] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:32 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997712.485233502] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:33 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997713.485196256] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:34 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997714.485226637] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:08:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997715.485187441] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:36 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997716.485253924] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:08:37 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997717.485217847] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:08:38 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997718.485235260] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:39 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997719.485230796] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5538 rad, 偏差=0.001 rad
+3月 20 02:08:40 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997720.485213228] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:41 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997721.485191723] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:08:42 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997722.485185125] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:08:43 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997723.525229988] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:44 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997724.525502937] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:45 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997725.525219407] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:46 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997726.525253997] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:08:47 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997727.525197611] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:08:48 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997728.525218487] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:08:49 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997729.525188681] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:08:50 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997730.525228311] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:51 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997731.525174962] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:08:52 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997732.525201915] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:53 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997733.530198890] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:54 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997734.530204539] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5539 rad, 偏差=0.000 rad
+3月 20 02:08:55 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997735.535222944] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5544 rad, 偏差=-0.000 rad
+3月 20 02:08:56 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997736.535331843] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:08:57 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997737.535292341] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:08:58 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997738.535241773] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5545 rad, 偏差=-0.000 rad
+3月 20 02:08:59 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997739.540802738] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:09:00 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997740.540297828] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=0.000 rad
+3月 20 02:09:01 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997741.541025163] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5541 rad, 偏差=0.000 rad
+3月 20 02:09:02 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997742.540388843] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5543 rad, 偏差=-0.000 rad
+3月 20 02:09:03 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997743.540251223] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:09:04 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997744.540193056] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5546 rad, 偏差=-0.000 rad
+3月 20 02:09:05 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997745.555305000] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5540 rad, 偏差=0.000 rad
+3月 20 02:09:06 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997746.555204822] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5543 rad, 实际=5.5542 rad, 偏差=0.000 rad
+3月 20 02:09:07 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997747.555249974] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5676 rad, 实际=5.6286 rad, 偏差=-0.061 rad
+3月 20 02:09:08 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997748.555564251] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.5602 rad, 实际=5.5599 rad, 偏差=0.000 rad
+3月 20 02:09:09 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997749.580587885] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.7167 rad, 实际=5.7152 rad, 偏差=0.002 rad
+3月 20 02:09:10 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997750.580218341] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.7450 rad, 实际=5.7459 rad, 偏差=-0.001 rad
+3月 20 02:09:11 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997751.580206860] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.9753 rad, 实际=5.8961 rad, 偏差=0.079 rad
+3月 20 02:09:12 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997752.580213934] [gimbal_control_node]: 电机1(控制@200Hz): 目标=8.2727 rad, 实际=7.8135 rad, 偏差=0.459 rad
+3月 20 02:09:13 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997753.519393875] [auto_aim_node]: >>> 进入追踪模式
+3月 20 02:09:13 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997753.580186156] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.3738 rad, 偏差=0.052 rad
+3月 20 02:09:14 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997754.449404582] [auto_aim_node]: <<< 退出追踪模式 (松开 0.2s)
+3月 20 02:09:14 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997754.605194102] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4259 rad, 偏差=-0.000 rad
+3月 20 02:09:15 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997755.605258781] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4257 rad, 偏差=0.000 rad
+3月 20 02:09:16 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997756.605187376] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4261 rad, 偏差=-0.000 rad
+3月 20 02:09:17 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997757.605227408] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4257 rad, 偏差=0.000 rad
+3月 20 02:09:18 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997758.605207567] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4257 rad, 偏差=0.000 rad
+3月 20 02:09:19 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997759.605255498] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:09:20 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997760.605235014] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4259 rad, 偏差=-0.000 rad
+3月 20 02:09:21 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997761.635234877] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4259 rad, 偏差=-0.000 rad
+3月 20 02:09:22 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997762.635228708] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:09:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997763.635221842] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:09:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997764.635219357] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4257 rad, 偏差=0.000 rad
+3月 20 02:09:25 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997765.635225674] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:09:26 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997766.635204478] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4259 rad, 偏差=-0.000 rad
+3月 20 02:09:27 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997767.635225546] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4258 rad, 实际=5.4259 rad, 偏差=-0.000 rad
+3月 20 02:09:28 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997768.089476118] [auto_aim_node]: >>> 进入追踪模式
+3月 20 02:09:28 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997768.635217959] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4257 rad, 实际=5.4257 rad, 偏差=0.000 rad
+3月 20 02:09:29 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997769.635265279] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4257 rad, 实际=5.4256 rad, 偏差=0.000 rad
+3月 20 02:09:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997770.059412020] [auto_aim_node]: <<< 退出追踪模式 (松开 0.2s)
+3月 20 02:09:30 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997770.084372820] [auto_aim_node]: >>> 进入追踪模式
+3月 20 02:09:30 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997770.635294783] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4255 rad, 实际=5.4253 rad, 偏差=0.000 rad
+3月 20 02:09:31 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997771.439370984] [auto_aim_node]: <<< 退出追踪模式 (松开 0.2s)
+3月 20 02:09:31 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997771.635229659] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4255 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:09:31 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997771.679393758] [auto_aim_node]: >>> 进入追踪模式
+3月 20 02:09:32 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997772.209379884] [auto_aim_node]: <<< 退出追踪模式 (松开 0.2s)
+3月 20 02:09:32 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997772.645222919] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:09:33 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997773.695201715] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:09:34 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997774.695248505] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:09:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997775.695209475] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:09:36 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997776.695266211] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:09:37 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997777.695189682] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:09:38 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997778.695224389] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:09:39 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997779.695199853] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:09:40 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997780.695217410] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=0.000 rad
+3月 20 02:09:41 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997781.695181801] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:09:42 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997782.695212193] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:09:43 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997783.695348637] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4310 rad, 偏差=-0.005 rad
+3月 20 02:09:44 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997784.695279868] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:09:45 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997785.695252835] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:09:46 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997786.695241744] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:09:47 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997787.695192029] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:09:48 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997788.695196004] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=0.000 rad
+3月 20 02:09:49 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997789.695214254] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:09:50 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997790.695184191] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:09:51 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997791.695520061] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4253 rad, 偏差=0.000 rad
+3月 20 02:09:52 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997792.695242375] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:09:53 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997793.695244767] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:09:54 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997794.695215628] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:09:55 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997795.725222820] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:09:56 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997796.769954456] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:09:57 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997797.805011600] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:09:58 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997798.805115652] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=0.000 rad
+3月 20 02:09:59 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997799.805125066] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:00 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997800.805030297] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:10:01 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997801.815135922] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:10:02 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997802.840011259] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:10:03 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997803.975289754] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:10:04 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997804.980093473] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:10:05 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997805.985045020] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:10:06 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997806.990073215] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:10:08 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997808.012190098] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:10:09 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997809.127478046] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:10:10 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997810.127384826] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:10:11 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997811.147422302] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:10:12 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997812.152268438] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=0.000 rad
+3月 20 02:10:13 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997813.158598976] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:10:14 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997814.162251715] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4253 rad, 偏差=0.000 rad
+3月 20 02:10:15 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997815.167337460] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=0.000 rad
+3月 20 02:10:16 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997816.167238339] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4253 rad, 偏差=0.000 rad
+3月 20 02:10:17 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997817.182251005] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:18 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997818.212257184] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:19 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997819.327335674] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:10:20 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997820.327353559] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:21 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997821.327680987] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:10:22 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997822.342192778] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:10:23 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997823.342352040] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:10:24 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997824.378653106] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:25 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997825.408660270] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:26 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997826.408491867] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4258 rad, 偏差=-0.000 rad
+3月 20 02:10:27 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997827.428407017] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4257 rad, 偏差=-0.000 rad
+3月 20 02:10:28 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997828.498365689] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:29 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997829.568473343] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=0.000 rad
+3月 20 02:10:30 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997830.573411542] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:10:31 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997831.578471499] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:10:32 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997832.598514405] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4261 rad, 偏差=-0.001 rad
+3月 20 02:10:33 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997833.624129221] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4256 rad, 偏差=-0.000 rad
+3月 20 02:10:34 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997834.649390400] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4255 rad, 偏差=0.000 rad
+3月 20 02:10:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997835.693746965] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4256 rad, 实际=5.4254 rad, 偏差=0.000 rad
+3月 20 02:10:35 jetson python3[1230]: [INFO] 接收到终止信号，正在关闭所有节点...
+3月 20 02:10:35 jetson python3[1230]: [INFO] 正在终止 vt_remote_node 进程组 (PID: 1735)...
+3月 20 02:10:35 jetson python3[1230]: [INFO] 正在终止 gimbal_control_node 进程组 (PID: 1813)...
+3月 20 02:10:35 jetson python3[1230]: [INFO] 正在终止 chassis_launch 进程组 (PID: 1945)...
+3月 20 02:10:35 jetson python3[1230]: [INFO] 正在终止 ammo_booster_node 进程组 (PID: 2042)...
+3月 20 02:10:35 jetson python3[1230]: [INFO] 正在终止 auto_aim_launch 进程组 (PID: 2221)...
+3月 20 02:10:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997835.950495471] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:35 jetson python3[1230]: [auto_aim_launch/OUT] [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+3月 20 02:10:35 jetson python3[1230]: [chassis_launch/OUT] [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+3月 20 02:10:35 jetson python3[1230]: [vt_remote_node/ERR] [INFO] [1773997835.959644926] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:35 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [1773997835.961580761] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:35 jetson python3[1230]: [ammo_booster_node/ERR] [INFO] [1773997835.962369280] [ammo_booster_node]: AmmoBoosterNode 已关闭，电机已停止
+3月 20 02:10:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997835.963626002] [gimbal_control_node]: 正在停止电机...
+3月 20 02:10:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997835.963775235] [gimbal_control_node]: 电机1已停止
+3月 20 02:10:35 jetson python3[1230]: [gimbal_control_node/ERR] [INFO] [1773997835.963843117] [gimbal_control_node]: 电机2已停止
+3月 20 02:10:35 jetson python3[1230]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773997835.950320486] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:35 jetson python3[1230]: [chassis_launch/OUT] [INFO] [chassis_control_node-2]: sending signal 'SIGINT' to process[chassis_control_node-2]
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/OUT] [INFO] [auto_aim_node-3]: sending signal 'SIGINT' to process[auto_aim_node-3]
+3月 20 02:10:36 jetson python3[1230]: [chassis_launch/OUT] [INFO] [chassis_serial_node-1]: sending signal 'SIGINT' to process[chassis_serial_node-1]
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/OUT] [INFO] [armor_detector_node-2]: sending signal 'SIGINT' to process[armor_detector_node-2]
+3月 20 02:10:36 jetson python3[1230]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773997835.953680415] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:36 jetson python3[1230]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773997835.969779318] [chassis_serial_node]: 已发送停止指令
+3月 20 02:10:36 jetson python3[1230]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773997836.001171363] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997835.950712586] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/OUT] [ERROR] [auto_aim_node-3]: process has died [pid 2323, exit code -2, cmd '/home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/auto_aim_node --ros-args -r __node:=auto_aim_node --params-file /tmp/launch_params_4z9ugewn'].
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/OUT] [armor_detector_node-2] [INFO] [1773997835.954943311] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:36 jetson python3[1230]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773997836.011502886] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:36 jetson python3[1230]: [chassis_launch/OUT] [INFO] [chassis_serial_node-1]: process has finished cleanly [pid 2273]
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/ERR]   from pkg_resources import load_entry_point
+3月 20 02:10:36 jetson python3[1230]: [auto_aim_launch/OUT] [ERROR] [armor_detector_node-2]: process has died [pid 2321, exit code -2, cmd '/home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/armor_detector_node --ros-args -r __node:=armor_detector_node --params-file /tmp/launch_params_2ju0gnzj'].
+3月 20 02:10:37 jetson python3[1230]: [chassis_launch/OUT] [INFO] [chassis_control_node-2]: process has finished cleanly [pid 2275]
+3月 20 02:10:37 jetson python3[1230]: [chassis_launch/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:10:37 jetson python3[1230]: [chassis_launch/ERR]   from pkg_resources import load_entry_point
+3月 20 02:10:37 jetson python3[1230]: [gimbal_control_node/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:10:37 jetson python3[1230]: [gimbal_control_node/ERR]   from pkg_resources import load_entry_point
+3月 20 02:10:37 jetson python3[1230]: [ammo_booster_node/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:10:37 jetson python3[1230]: [ammo_booster_node/ERR]   from pkg_resources import load_entry_point
+3月 20 02:10:38 jetson python3[1230]: [vt_remote_node/ERR] [INFO] [1773997838.553885284] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:10:40 jetson python3[1230]: [INFO] 所有节点已关闭。
+3月 20 02:10:40 jetson python3[3738]: =======================================
+3月 20 02:10:40 jetson python3[3738]:       RM26 一键关闭脚本 (Python版)
+3月 20 02:10:40 jetson python3[3738]: =======================================
+3月 20 02:10:40 jetson python3[3738]: [INFO] 未检测到 start_all.py 进程，直接执行兜底关闭。
+3月 20 02:10:40 jetson python3[3738]: [INFO] 未发现需要兜底关闭的节点进程。
+3月 20 02:10:40 jetson python3[3738]: [INFO] 一键关闭流程结束。
+3月 20 02:10:40 jetson systemd[1]: rm26-start-all.service: Succeeded.
+3月 20 02:10:43 jetson systemd[1]: rm26-start-all.service: Scheduled restart job, restart counter is at 1.
+3月 20 02:10:43 jetson systemd[1]: Stopped RM26 Start All ROS2 Nodes.
+3月 20 02:10:43 jetson systemd[1]: Started RM26 Start All ROS2 Nodes.
+3月 20 02:10:44 jetson python3[3803]: =========================================
+3月 20 02:10:44 jetson python3[3803]:   一键配置 CAN 接口 & USB 串口权限
+3月 20 02:10:44 jetson python3[3803]: =========================================
+3月 20 02:10:44 jetson python3[3803]: [1/5] 加载 CAN 内核模块...
+3月 20 02:10:44 jetson sudo[3805]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/modprobe can
+3月 20 02:10:44 jetson sudo[3805]: pam_unix(sudo:session): session opened for user root by (uid=0)
+3月 20 02:10:44 jetson sudo[3805]: pam_unix(sudo:session): session closed for user root
+3月 20 02:10:44 jetson sudo[3808]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/modprobe can_raw
+3月 20 02:10:44 jetson sudo[3808]: pam_unix(sudo:session): session opened for user root by (uid=0)
+3月 20 02:10:44 jetson sudo[3808]: pam_unix(sudo:session): session closed for user root
+3月 20 02:10:44 jetson sudo[3811]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/sbin/modprobe can_dev
+3月 20 02:10:44 jetson sudo[3811]: pam_unix(sudo:session): session opened for user root by (uid=0)
+3月 20 02:10:44 jetson sudo[3811]: pam_unix(sudo:session): session closed for user root
+3月 20 02:10:44 jetson python3[3803]:   -> CAN 内核模块加载完成
+3月 20 02:10:44 jetson python3[3803]: [2/5] 配置 CAN0...
+3月 20 02:10:44 jetson python3[3803]:   -> can0 已在工作，跳过配置
+3月 20 02:10:44 jetson python3[3803]: [3/5] 配置 CAN1...
+3月 20 02:10:44 jetson python3[3803]:   -> can1 已在工作，跳过配置
+3月 20 02:10:44 jetson python3[3803]: [4/5] 配置 CAN2...
+3月 20 02:10:44 jetson python3[3803]:   -> can2 已在工作，跳过配置
+3月 20 02:10:44 jetson python3[3803]: [5/5] 配置 USB 串口权限...
+3月 20 02:10:44 jetson sudo[3823]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/bin/chmod 666 /dev/ttyUSB0
+3月 20 02:10:44 jetson sudo[3823]: pam_unix(sudo:session): session opened for user root by (uid=0)
+3月 20 02:10:44 jetson sudo[3823]: pam_unix(sudo:session): session closed for user root
+3月 20 02:10:44 jetson sudo[3826]: linkerhand : TTY=unknown ; PWD=/home/linkerhand/RMUL2026/rm26_ros2_ws ; USER=root ; COMMAND=/usr/bin/chmod 666 /dev/ttyUSB1
+3月 20 02:10:44 jetson sudo[3826]: pam_unix(sudo:session): session opened for user root by (uid=0)
+3月 20 02:10:44 jetson sudo[3826]: pam_unix(sudo:session): session closed for user root
+3月 20 02:10:44 jetson python3[3803]:   -> USB 串口权限配置完成
+3月 20 02:10:44 jetson python3[3803]: =========================================
+3月 20 02:10:44 jetson python3[3803]:   配置结果
+3月 20 02:10:44 jetson python3[3803]: =========================================
+3月 20 02:10:44 jetson python3[3803]: CAN0 状态:
+3月 20 02:10:44 jetson python3[3829]: 4: can0: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state UP mode DEFAULT group default qlen 100
+3月 20 02:10:44 jetson python3[3829]:     link/can
+3月 20 02:10:44 jetson python3[3803]: CAN1 状态:
+3月 20 02:10:44 jetson python3[3831]: 5: can1: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state UP mode DEFAULT group default qlen 100
+3月 20 02:10:44 jetson python3[3831]:     link/can
+3月 20 02:10:44 jetson python3[3803]: CAN2 状态:
+3月 20 02:10:44 jetson python3[3833]: 6: can2: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc pfifo_fast state UP mode DEFAULT group default qlen 100
+3月 20 02:10:44 jetson python3[3833]:     link/can
+3月 20 02:10:44 jetson python3[3803]: USB 串口权限:
+3月 20 02:10:44 jetson python3[3834]: crw-rw-rw- 1 root dialout 188, 0 6月  17  2024 /dev/ttyUSB0
+3月 20 02:10:44 jetson python3[3834]: crw-rw-rw- 1 root dialout 188, 1 3月  20 02:10 /dev/ttyUSB1
+3月 20 02:10:44 jetson python3[3803]: =========================================
+3月 20 02:10:44 jetson python3[3803]:   所有配置完成!
+3月 20 02:10:44 jetson python3[3803]: =========================================
+3月 20 02:10:48 jetson python3[3802]: =======================================
+3月 20 02:10:48 jetson python3[3802]:       RM26 一键启动脚本 (Python版)
+3月 20 02:10:48 jetson python3[3802]: =======================================
+3月 20 02:10:48 jetson python3[3802]: [INFO] 正在执行: ./setup.sh
+3月 20 02:10:48 jetson python3[3802]: [INFO] setup.sh 执行完成。
+3月 20 02:10:48 jetson python3[3802]: [INFO] 开始启动 ROS 2 节点...
+3月 20 02:10:48 jetson python3[3802]:  -> 正在启动: vt_remote_node
+3月 20 02:10:48 jetson python3[3802]:  -> 正在启动: gimbal_control_node
+3月 20 02:10:48 jetson python3[3802]: [vt_remote_node/ERR] [INFO] [1773997848.327004942] [vt_remote_node]: 串口 /dev/ttyUSB0 已打开
+3月 20 02:10:48 jetson python3[3802]: [vt_remote_node/ERR] [INFO] [1773997848.327589619] [vt_remote_node]: VtRemoteNode 已启动 | 串口: /dev/ttyUSB0 | 波特率: 921600
+3月 20 02:10:49 jetson python3[3802]: [vt_remote_node/ERR] [INFO] [1773997849.347437694] [vt_remote_node]: 启动回中校验通过（保持中点 1.01 秒），开始正常发布控制话题
+3月 20 02:10:50 jetson python3[3802]:  -> 正在启动: chassis_launch
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.431062867] [gimbal_control_node]: 云台底层控制节点配置:
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.431451374] [gimbal_control_node]:   电机1(Yaw): can0 ID=0x02, 控制频率=200Hz, 速度=12.00 rad/s
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.431545110] [gimbal_control_node]:   电机1(Yaw) 方向符号: 1
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.431609670] [gimbal_control_node]:   电机2(Pitch): can0 ID=0x01, 范围=[-0.21, 0.31] rad, 速度=4.00 rad/s
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.431754656] [gimbal_control_node]:   自动恢复冷却: 5.0s，CAN接收超时: 5ms
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.433344485] [gimbal_control_node]:   未就绪恢复触发间隔: 1.0s
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.433419666] [gimbal_control_node]:   重连角度恢复: 开启, 减速比[m1=1.000,m2=1.000], 输出轴容差=0.0800 rad
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.440822713] [gimbal_control_node]: 正在初始化电机1...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.441179069] [gimbal_control_node]: 正在初始化电机2...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.441277796] [gimbal_control_node]: 电机1: 初始化尝试 1/5 ...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.441625258] [gimbal_control_node]: 电机1: 读取初始化前状态...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.441702646] [gimbal_control_node]: 电机1初始化前状态: pos=0.0000 rad
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.441769189] [gimbal_control_node]: 电机1: 失能电机并清除错误...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.441436187] [gimbal_control_node]: 云台底层控制节点已启动，等待 /gimbal/cmd 指令...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.441592275] [gimbal_control_node]: 电机2: 初始化尝试 1/5 ...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.442514820] [gimbal_control_node]: 电机2: 读取初始化前状态...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.442578036] [gimbal_control_node]: 电机2初始化前状态: pos=0.0000 rad
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.442676059] [gimbal_control_node]: 电机2: 失能电机并清除错误...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [WARN] [1773997850.447484608] [gimbal_control_node]: 双电机均未就绪（初始化进行中），跳过控制指令
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.642273071] [gimbal_control_node]: 电机1切换到CSP模式...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.643080862] [gimbal_control_node]: 电机2切换到CSP模式...
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.813762848] [gimbal_control_node]: 电机1已使能，启动位置: 5.4302 rad (311.13°)
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.814026428] [gimbal_control_node]: 电机1: CAN接收超时已设置为 5ms（防止控制循环阻塞）
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.814025980] [gimbal_control_node]: 电机2已使能，启动位置: 0.0479 rad (2.74°)
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997850.814273020] [gimbal_control_node]: 电机2: CAN接收超时已设置为 5ms（防止控制循环阻塞）
+3月 20 02:10:50 jetson python3[3802]: [gimbal_control_node/ERR] [WARN] [1773997850.817825862] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+3月 20 02:10:51 jetson python3[3802]:  -> 正在启动: ammo_booster_node
+3月 20 02:10:51 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997851.822605341] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:10:52 jetson python3[3802]: [gimbal_control_node/ERR] [WARN] [1773997852.822501214] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+3月 20 02:10:52 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997852.823028504] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4303 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:10:52 jetson python3[3802]: [chassis_launch/OUT] [INFO] [launch]: All log files can be found below /home/linkerhand/.ros/log/2026-03-20-02-10-52-986379-jetson-3955
+3月 20 02:10:52 jetson python3[3802]: [chassis_launch/OUT] [INFO] [launch]: Default logging verbosity is set to INFO
+3月 20 02:10:53 jetson python3[3802]: [chassis_launch/OUT] [INFO] [chassis_serial_node-1]: process started with pid [4124]
+3月 20 02:10:53 jetson python3[3802]: [chassis_launch/OUT] [INFO] [chassis_control_node-2]: process started with pid [4126]
+3月 20 02:10:53 jetson python3[3802]:  -> 正在启动: auto_aim_launch
+3月 20 02:10:53 jetson python3[3802]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773997853.572214129] [chassis_serial_node]: ChassisSerialNode 已启动 | 串口: /dev/ttyUSB1 | 波特率: 460800 | 频率: 200Hz
+3月 20 02:10:53 jetson python3[3802]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773997853.608942271] [chassis_control_node]: ChassisControlNode 已启动 | 控制频率: 200Hz
+3月 20 02:10:53 jetson python3[3802]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773997853.609292232] [chassis_control_node]: 限制参数: 线加速度=10.00 角加速度=16.00 | 线速度=1.00~2.00 角速度=4.00 | 死区: 2
+3月 20 02:10:53 jetson python3[3802]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773997853.617503494] [chassis_control_node]: mode 已切换为 1，当前输入源=remote
+3月 20 02:10:53 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997853.832654226] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4302 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:10:54 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773997854.679857976] [ammo_booster_node]: CAN 接口 can2 已初始化
+3月 20 02:10:54 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773997854.686587194] [ammo_booster_node]: AmmoBoosterNode 已启动 | CAN: can2 | 低速: 500 RPM | 高速: 6500 RPM | 发送周期: 50 ms | 接收周期: 2 ms
+3月 20 02:10:54 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773997854.686728631] [ammo_booster_node]: 当前模式: 低速 (500 RPM)
+3月 20 02:10:54 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773997854.686795526] [ammo_booster_node]: 发射控制输入源: hybrid
+3月 20 02:10:54 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773997854.753261513] [ammo_booster_node]: 鼠标左键状态变化 -> 切换至低速模式 (500 RPM)
+3月 20 02:10:54 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773997854.758932080] [ammo_booster_node]: mode 已切换为 1，当前输入源=remote
+3月 20 02:10:54 jetson python3[3802]: [gimbal_control_node/ERR] [WARN] [1773997854.827433052] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+3月 20 02:10:54 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997854.832601024] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:10:55 jetson python3[3802]: =======================================
+3月 20 02:10:55 jetson python3[3802]:   所有节点已启动！按 Ctrl+C 可一键安全退出
+3月 20 02:10:55 jetson python3[3802]: =======================================
+3月 20 02:10:55 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997855.832555902] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4303 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:10:56 jetson python3[3802]: [gimbal_control_node/ERR] [WARN] [1773997856.827447781] [gimbal_control_node]: /gimbal/cmd 指令超时，保持当前位置
+3月 20 02:10:56 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997856.832624449] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [INFO] [launch]: All log files can be found below /home/linkerhand/.ros/log/2026-03-20-02-10-57-030967-jetson-4128
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [INFO] [launch]: Default logging verbosity is set to INFO
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [INFO] [hk_camera_node-1]: process started with pid [4240]
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [INFO] [armor_detector_node-2]: process started with pid [4242]
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [INFO] [auto_aim_node-3]: process started with pid [4244]
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [ERROR] [hk_camera_node-1]: process has died [pid 4240, exit code 127, cmd '/home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/hk_camera_node --ros-args -r __node:=hk_camera_node --params-file /tmp/launch_params_25dld9dx'].
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [hk_camera_node-1] /home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/hk_camera_node: error while loading shared libraries: libMvCameraControl.so: cannot open shared object file: No such file or directory
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.672106333] [auto_aim_node]: 自动瞄准控制节点配置:
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.672525593] [auto_aim_node]:   遥控: RC范围364~1684(中值1024), ch0/ch1, 死区2
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.672620322] [auto_aim_node]:   鼠标: yaw灵敏度=0.0200, pitch灵敏度=0.0200, 限幅=1500, 优先窗口=0.30s
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.672713612] [auto_aim_node]:   输入源: hybrid
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.672773949] [auto_aim_node]:   追踪PI: Yaw(Kp=0.60,Ki=0.12), Pitch(Kp=-0.30,Ki=-0.05), 退出=0.2s
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.672856777] [auto_aim_node]:   KF: q_angle=0.0100, q_vel=15.0000, r_yaw=0.0030, r_pitch=0.0050
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.672939381] [auto_aim_node]:   目标锁定: 匹配阈值=1.00 rad, 丢失超时=0.20 s
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.673051291] [auto_aim_node]:   电机1限幅: 启用, 范围=[-12.5664, 12.5664] rad
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.673152355] [auto_aim_node]:   底盘角速度补偿: 启用, 增益=1.000, 符号=1, alpha=0.100, 旋转触发阈值=0.080rad/s, tracking中关闭
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.673234511] [auto_aim_node]:   云台角速度稳定: 启用, 增益=-4.400, alpha=0.100, tracking中关闭
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.673310685] [auto_aim_node]:   偏移校准: Yaw=0.0000 rad, Pitch=0.0000 rad
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.673380364] [auto_aim_node]:   弹道补偿: 弹速=15.0 m/s, 重力=9.81 m/s²
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.687803376] [auto_aim_node]: 自动瞄准控制节点已启动，控制频率=200Hz
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [WARN] [1773997857.698219476] [auto_aim_node]: 等待电机实际位置反馈...
+3月 20 02:10:57 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773997857.758323748] [auto_aim_node]: mode 已切换为 1，当前输入源=remote
+3月 20 02:10:57 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997857.842708930] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:10:58 jetson python3[3802]: [auto_aim_launch/OUT] [armor_detector_node-2] [INFO] [1773997858.599418291] [armor_detector_node]: Skipped Ultralytics metadata header (size: 541)
+3月 20 02:10:58 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997858.852690734] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:10:59 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997859.852715775] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:00 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997860.857849307] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:11:01 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997861.862881131] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:02 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997862.862706358] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:11:03 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997863.872670637] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:05 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997865.012684426] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:06 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997866.012665265] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:07 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997867.012689228] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:07 jetson python3[3802]: [auto_aim_launch/OUT] [armor_detector_node-2] [INFO] [1773997867.175390189] [armor_detector_node]: ArmorDetectorNode started.
+3月 20 02:11:08 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997868.013009642] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:09 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997869.012748849] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:10 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997870.012767530] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:11:11 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997871.012737645] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:12 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997872.012704926] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4308 rad, 偏差=-0.000 rad
+3月 20 02:11:13 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997873.012827945] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:14 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997874.013160374] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:15 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997875.012831662] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:16 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997876.012732808] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:17 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997877.012739600] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:11:18 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997878.012698684] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:11:19 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997879.012722926] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:20 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997880.012743882] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:21 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997881.012789413] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:22 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997882.012834112] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:23 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997883.013080334] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:24 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997884.012769025] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:25 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997885.012724790] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:11:26 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997886.017657919] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:27 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997887.037801145] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:28 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997888.042733615] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:29 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997889.142740580] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:11:30 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997890.142731353] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:11:31 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997891.142683217] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:32 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997892.142746232] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:11:33 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997893.142743059] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:34 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997894.142695142] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:35 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997895.142747485] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:11:36 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997896.142692873] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:11:37 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997897.142689876] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:38 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997898.142688432] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:39 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997899.143028106] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:40 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997900.142735518] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:11:41 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997901.147874347] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997902.147770866] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:11:43 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997903.147746295] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:44 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997904.147688412] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:11:45 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997905.147670338] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:46 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997906.147747758] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:47 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997907.147710709] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:48 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997908.147741509] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:49 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997909.147783994] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997910.147764720] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4299 rad, 偏差=0.000 rad
+3月 20 02:11:51 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997911.147752620] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:11:52 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997912.147750976] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:11:53 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997913.148006036] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:54 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997914.147791833] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:55 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997915.147803240] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:11:56 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997916.162774697] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:11:57 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997917.237999308] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:11:58 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997918.237748438] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:11:59 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997919.242719671] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:00 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997920.242727597] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:01 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997921.247796260] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:02 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997922.247718070] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:03 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997923.247756649] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:04 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997924.252831106] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:05 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997925.257765759] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:06 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997926.257710094] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:07 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997927.267971829] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:08 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997928.277727970] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:09 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997929.277911968] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:10 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997930.297736560] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:11 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997931.297773710] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:12 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997932.307698642] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:13 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997933.307707279] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:14 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997934.317757365] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:15 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997935.317708986] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:16 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997936.322757260] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:17 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997937.322725272] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:18 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997938.342686336] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:19 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997939.342690994] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:20 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997940.362922552] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:21 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997941.363164900] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:22 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997942.362732343] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:23 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997943.372730483] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4298 rad, 偏差=0.001 rad
+3月 20 02:12:24 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997944.372725523] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4299 rad, 偏差=0.001 rad
+3月 20 02:12:25 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997945.377880636] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:26 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997946.377745664] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:27 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997947.377800619] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:28 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997948.392736541] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:29 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997949.392629859] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:30 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997950.392733058] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:31 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997951.402799218] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:32 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997952.402684322] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:33 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997953.402685527] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:34 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997954.412716289] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:12:35 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997955.417738064] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:12:36 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997956.417744157] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:37 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997957.417682996] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:38 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997958.427756456] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:39 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997959.427742663] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:40 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997960.427684786] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:41 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997961.427745659] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4308 rad, 偏差=-0.000 rad
+3月 20 02:12:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997962.447881640] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:43 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997963.447721970] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:44 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997964.447728484] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:12:45 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997965.447712698] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:46 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997966.447708826] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:12:47 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997967.472961798] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:48 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997968.472736283] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:49 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997969.472713617] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997970.472836177] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:51 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997971.472718445] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:52 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997972.492745868] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:12:53 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997973.497738297] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:54 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997974.497991655] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:55 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997975.497727485] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:56 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997976.497637363] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:12:57 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997977.517863033] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:58 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997978.522701406] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:12:59 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997979.522762124] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:00 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997980.522679608] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:01 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997981.522746136] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:02 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997982.522782984] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:03 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997983.522661343] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:04 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997984.558807118] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:05 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997985.572822034] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:13:06 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997986.572783473] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:07 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997987.572721602] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:08 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997988.572875977] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:13:09 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997989.572694719] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:13:10 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997990.572699376] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:11 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997991.572719902] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:12 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997992.617749947] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:13 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997993.617705827] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:14 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997994.617748385] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4300 rad, 偏差=0.000 rad
+3月 20 02:13:15 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997995.617694657] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:16 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997996.617675607] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:17 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997997.617915583] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:18 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997998.617759174] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4301 rad, 偏差=0.000 rad
+3月 20 02:13:19 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773997999.617706815] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:20 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998000.617714426] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:21 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998001.652755900] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:22 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998002.652667369] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:23 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998003.652711699] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:24 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998004.652809617] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:25 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998005.652706014] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:26 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998006.652716129] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:13:27 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998007.652717832] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:28 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998008.652693712] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:29 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998009.652762949] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:30 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998010.652682093] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:31 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998011.652721036] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:32 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998012.697731776] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:33 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998013.697716782] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:34 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998014.697714242] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:35 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998015.697870067] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:36 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998016.697784427] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:37 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998017.697730512] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:38 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998018.697702966] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:39 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998019.698616829] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:40 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998020.697844360] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:41 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998021.697752413] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998022.697727551] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:43 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998023.697711587] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:44 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998024.752711726] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:45 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998025.787839535] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:46 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998026.787917978] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:47 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998027.787703242] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:13:48 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998028.787766607] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:49 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998029.787749967] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998030.787770240] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:13:51 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998031.788207375] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:52 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998032.787769617] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:53 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998033.787858371] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:13:54 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998034.787721547] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:55 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998035.787743943] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:13:56 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998036.787727613] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:57 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998037.787776253] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:13:58 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998038.787753937] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:13:59 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998039.842693325] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:00 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998040.842639154] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:01 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998041.847705640] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:14:02 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998042.847727274] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:03 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998043.847725886] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:14:04 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998044.847882784] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:05 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998045.847680732] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:06 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998046.847862961] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4301 rad, 偏差=0.000 rad
+3月 20 02:14:07 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998047.847894786] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:08 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998048.849949901] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:14:09 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998049.847747488] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:10 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998050.847638872] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:11 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998051.847752265] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:12 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998052.847719422] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:14:13 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998053.847709816] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:14 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998054.847727665] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:15 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998055.847744149] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:16 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998056.902742909] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:17 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998057.907857766] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:14:18 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998058.907700674] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:19 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998059.907720567] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:14:20 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998060.917937043] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:21 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998061.917700929] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4301 rad, 偏差=0.000 rad
+3月 20 02:14:22 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998062.917701460] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:14:23 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998063.917771241] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:14:24 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998064.917690085] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:25 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998065.917732279] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:14:26 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998066.917674055] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:14:27 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998067.917907098] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:14:28 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998068.917703155] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:29 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998069.917703135] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4308 rad, 偏差=-0.000 rad
+3月 20 02:14:30 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998070.917794206] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:31 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998071.917807041] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:32 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998072.917723329] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:14:33 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998073.917670363] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:34 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998074.977721320] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:14:36 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998076.007898476] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:37 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998077.012737381] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:14:38 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998078.012713205] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:39 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998079.012739047] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:40 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998080.012724155] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:41 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998081.012701457] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998082.013008083] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:43 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998083.012778842] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:44 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998084.012707979] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:14:45 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998085.012743535] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:14:46 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998086.012724239] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:47 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998087.012726450] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:48 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998088.012971200] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:49 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998089.012869048] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:50 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998090.012777156] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:51 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998091.012764198] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:14:52 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998092.012731990] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:14:53 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998093.012897911] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:14:54 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998094.013010142] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:14:55 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998095.112770568] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:14:56 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998096.112690592] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:14:57 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998097.112733747] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:14:58 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998098.112735460] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:14:59 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998099.112690238] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:00 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998100.122715652] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:01 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998101.122805099] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:15:02 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998102.122680183] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:15:03 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998103.122752984] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:04 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998104.122734227] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:15:05 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998105.122743182] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:06 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998106.123268908] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:15:07 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998107.122729748] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:08 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998108.122720405] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:09 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998109.122730300] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:15:10 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998110.122737166] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:15:11 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998111.122734319] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:12 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998112.122706726] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4308 rad, 偏差=-0.000 rad
+3月 20 02:15:13 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998113.122656410] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:15:14 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998114.122710451] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:15:15 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998115.192750421] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:16 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998116.192727159] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4307 rad, 偏差=-0.000 rad
+3月 20 02:15:17 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998117.202733611] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:18 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998118.202745630] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:19 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998119.202935404] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:20 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998120.202708268] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:15:21 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998121.202747688] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:22 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998122.203359632] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:23 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998123.202701264] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:24 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998124.202752744] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:25 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998125.202755976] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:26 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998126.202706741] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:27 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998127.202724177] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:28 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998128.202812129] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:29 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998129.202726000] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:30 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998130.202717726] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4302 rad, 偏差=0.000 rad
+3月 20 02:15:31 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998131.202702076] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:32 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998132.202748639] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:33 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998133.202743055] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4345 rad, 偏差=-0.004 rad
+3月 20 02:15:34 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998134.203305990] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4165 rad, 偏差=0.014 rad
+3月 20 02:15:35 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998135.202762103] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4314 rad, 偏差=-0.001 rad
+3月 20 02:15:36 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998136.282665003] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4308 rad, 偏差=-0.000 rad
+3月 20 02:15:37 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998137.287672332] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:38 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998138.292716067] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:39 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998139.292996895] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4303 rad, 偏差=0.000 rad
+3月 20 02:15:40 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998140.292837865] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4304 rad, 偏差=0.000 rad
+3月 20 02:15:41 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998141.292755229] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4305 rad, 偏差=-0.000 rad
+3月 20 02:15:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998142.292840308] [gimbal_control_node]: 电机1(控制@200Hz): 目标=5.4304 rad, 实际=5.4306 rad, 偏差=-0.000 rad
+3月 20 02:15:42 jetson systemd[1]: Stopping RM26 Start All ROS2 Nodes...
+3月 20 02:15:42 jetson python3[3802]: [INFO] 接收到终止信号，正在关闭所有节点...
+3月 20 02:15:42 jetson python3[3802]: [INFO] 正在终止 vt_remote_node 进程组 (PID: 3844)...
+3月 20 02:15:42 jetson python3[3802]: [INFO] 正在终止 gimbal_control_node 进程组 (PID: 3903)...
+3月 20 02:15:42 jetson python3[3802]: [INFO] 正在终止 chassis_launch 进程组 (PID: 3955)...
+3月 20 02:15:42 jetson python3[3802]: [INFO] 正在终止 ammo_booster_node 进程组 (PID: 4055)...
+3月 20 02:15:42 jetson python3[3802]: [INFO] 正在终止 auto_aim_launch 进程组 (PID: 4128)...
+3月 20 02:15:42 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773998142.799286060] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [auto_aim_launch/OUT] [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+3月 20 02:15:42 jetson python3[3802]: [vt_remote_node/ERR] [INFO] [1773998142.799120101] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+3月 20 02:15:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998142.799211290] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [ammo_booster_node/ERR] [INFO] [1773998142.805822394] [ammo_booster_node]: AmmoBoosterNode 已关闭，电机已停止
+3月 20 02:15:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998142.809520968] [gimbal_control_node]: 正在停止电机...
+3月 20 02:15:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998142.810435425] [gimbal_control_node]: 电机1已停止
+3月 20 02:15:42 jetson python3[3802]: [gimbal_control_node/ERR] [INFO] [1773998142.810767023] [gimbal_control_node]: 电机2已停止
+3月 20 02:15:42 jetson python3[3802]: [auto_aim_launch/OUT] [INFO] [auto_aim_node-3]: sending signal 'SIGINT' to process[auto_aim_node-3]
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [INFO] [chassis_control_node-2]: sending signal 'SIGINT' to process[chassis_control_node-2]
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [INFO] [chassis_serial_node-1]: sending signal 'SIGINT' to process[chassis_serial_node-1]
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773998142.803962401] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [auto_aim_launch/OUT] [INFO] [armor_detector_node-2]: sending signal 'SIGINT' to process[armor_detector_node-2]
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773998142.814100742] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773998142.821297009] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [chassis_control_node-2] [INFO] [1773998142.822771951] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [auto_aim_launch/OUT] [armor_detector_node-2] [INFO] [1773998142.799657060] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [auto_aim_launch/OUT] [ERROR] [auto_aim_node-3]: process has died [pid 4244, exit code -2, cmd '/home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/auto_aim_node --ros-args -r __node:=auto_aim_node --params-file /tmp/launch_params_e0kqf7jz'].
+3月 20 02:15:42 jetson python3[3802]: [auto_aim_launch/OUT] [auto_aim_node-3] [INFO] [1773998142.804063321] [rclcpp]: signal_handler(signal_value=2)
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [chassis_serial_node-1] [INFO] [1773998142.848459739] [chassis_serial_node]: 已发送停止指令
+3月 20 02:15:42 jetson python3[3802]: [ammo_booster_node/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:15:42 jetson python3[3802]: [ammo_booster_node/ERR]   from pkg_resources import load_entry_point
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [INFO] [chassis_control_node-2]: process has finished cleanly [pid 4126]
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/OUT] [INFO] [chassis_serial_node-1]: process has finished cleanly [pid 4124]
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:15:42 jetson python3[3802]: [chassis_launch/ERR]   from pkg_resources import load_entry_point
+3月 20 02:15:42 jetson python3[3802]: [gimbal_control_node/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:15:42 jetson python3[3802]: [gimbal_control_node/ERR]   from pkg_resources import load_entry_point
+3月 20 02:15:42 jetson python3[3802]: [vt_remote_node/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:15:42 jetson python3[3802]: [vt_remote_node/ERR]   from pkg_resources import load_entry_point
+3月 20 02:15:43 jetson python3[3802]: [auto_aim_launch/OUT] [ERROR] [armor_detector_node-2]: process has died [pid 4242, exit code -2, cmd '/home/linkerhand/RMUL2026/rm26_ros2_ws/install/rm26_auto_aim/lib/rm26_auto_aim/armor_detector_node --ros-args -r __node:=armor_detector_node --params-file /tmp/launch_params_ce1tkldf'].
+3月 20 02:15:43 jetson python3[3802]: [auto_aim_launch/ERR] /opt/ros/foxy/bin/ros2:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+3月 20 02:15:43 jetson python3[3802]: [auto_aim_launch/ERR]   from pkg_resources import load_entry_point
+3月 20 02:15:43 jetson python3[3802]: [INFO] 所有节点已关闭。
+3月 20 02:15:45 jetson python3[5755]: =======================================
+3月 20 02:15:45 jetson python3[5755]:       RM26 一键关闭脚本 (Python版)
+3月 20 02:15:45 jetson python3[5755]: =======================================
+3月 20 02:15:45 jetson python3[5755]: [INFO] 服务 rm26-start-all.service 当前未运行。
+3月 20 02:15:45 jetson python3[5755]: [INFO] 检测到 start_all.py 进程: [3802]
+3月 20 02:15:45 jetson python3[5755]: [INFO] 未发现需要兜底关闭的节点进程。
+3月 20 02:15:45 jetson python3[5755]: [INFO] 一键关闭流程结束。
+3月 20 02:15:45 jetson systemd[1]: rm26-start-all.service: Succeeded.
+3月 20 02:15:45 jetson systemd[1]: Stopped RM26 Start All ROS2 Nodes.

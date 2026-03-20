@@ -70,7 +70,7 @@ def generate_launch_description():
         description='是否启用底盘角速度补偿'
     )
     chassis_gyro_compensation_gain_arg = DeclareLaunchArgument(
-        'chassis_gyro_compensation_gain', default_value='1.6',
+        'chassis_gyro_compensation_gain', default_value='1.0',
         description='底盘角速度补偿增益'
     )
     chassis_gyro_compensation_sign_arg = DeclareLaunchArgument(
@@ -78,7 +78,7 @@ def generate_launch_description():
         description='底盘角速度补偿方向符号（+1 或 -1）'
     )
     chassis_gyro_filter_alpha_arg = DeclareLaunchArgument(
-        'chassis_gyro_filter_alpha', default_value='0.2',
+        'chassis_gyro_filter_alpha', default_value='0.1',
         description='底盘角速度一阶低通滤波 alpha'
     )
     chassis_gyro_apply_in_tracking_arg = DeclareLaunchArgument(
@@ -94,11 +94,11 @@ def generate_launch_description():
         description='是否启用云台角速度稳定控制'
     )
     gimbal_gyro_stabilization_gain_arg = DeclareLaunchArgument(
-        'gimbal_gyro_stabilization_gain', default_value='-1.8',
+        'gimbal_gyro_stabilization_gain', default_value='-4.4',
         description='云台角速度稳定增益'
     )
     gimbal_gyro_filter_alpha_arg = DeclareLaunchArgument(
-        'gimbal_gyro_filter_alpha', default_value='0.2',
+        'gimbal_gyro_filter_alpha', default_value='0.1',
         description='云台角速度一阶低通滤波 alpha'
     )
     gimbal_gyro_apply_in_tracking_arg = DeclareLaunchArgument(

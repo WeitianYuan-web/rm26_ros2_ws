@@ -1,0 +1,19 @@
+[Unit]
+Description=RM26 Start All ROS2 Nodes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=linkerhand
+Group=linkerhand
+WorkingDirectory=/home/linkerhand/RMUL2026/rm26_ros2_ws
+ExecStart=/usr/bin/python3 /home/linkerhand/RMUL2026/rm26_ros2_ws/start_all.py
+ExecStop=/usr/bin/python3 /home/linkerhand/RMUL2026/rm26_ros2_ws/stop_all.py
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

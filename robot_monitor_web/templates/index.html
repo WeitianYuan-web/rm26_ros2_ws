@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RM26 机器人状态监控</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="topbar">
+        <div>
+          <h1>RM26 机器人状态监控</h1>
+          <p class="subtitle">局域网网页监控 · 轻量模式</p>
+        </div>
+        <div class="clock-box">
+          <span>机器人时间</span>
+          <strong id="robotTime">--</strong>
+        </div>
+      </header>
+
+      <section class="panel image-panel">
+        <div class="panel-head">
+          <h2>视觉画面（手动刷新）</h2>
+          <button id="refreshImageBtn" type="button">刷新图像</button>
+        </div>
+        <div class="image-wrap">
+          <img id="cameraImage" alt="camera image" />
+          <p id="imageTip">点击“刷新图像”获取最新画面</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>话题状态</h2>
+          <span class="hint">每 2 秒自动更新</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>话题</th>
+                <th>类型</th>
+                <th>频率(Hz)</th>
+                <th>计数</th>
+                <th>最近时间</th>
+                <th>预览</th>
+              </tr>
+            </thead>
+            <tbody id="topicTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

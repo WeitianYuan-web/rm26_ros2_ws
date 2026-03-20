@@ -51,7 +51,7 @@ public:
     this->declare_parameter<std::string>("motor1_can_interface", "can0");
     this->declare_parameter<int>("motor1_id", 0x02);
     this->declare_parameter<double>("motor1_max_velocity", 12.0);
-    this->declare_parameter<int>("motor1_control_rate", 200);
+    this->declare_parameter<int>("motor1_control_rate", 500);
     this->declare_parameter<double>("motor1_control_speed", 12.0);
     this->declare_parameter<double>("motor1_control_acceleration", 10.0);
     this->declare_parameter<double>("motor1_direction_sign", 1.0);

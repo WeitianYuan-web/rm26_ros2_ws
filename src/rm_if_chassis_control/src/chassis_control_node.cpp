@@ -13,10 +13,9 @@
  *   - 通道值域 364 ~ 1684，中值 1024
  *
  * 供弹速度控制逻辑：
- *   - 订阅 /vt_remote/key_toggles，使用 fn_right 切换状态跟踪 booster 高/低速模式
- *   - 低速模式: 供弹速度固定为 0，fn_left 切换变化忽略
- *   - 高速模式: fn_left 切换状态变化时在 -3200 RPM 与 1200 RPM 之间切换
- *   - 从高速切回低速时，供弹速度自动归零
+ *   - 鼠标输入源: 按住鼠标左键持续供弹，松开即停
+ *   - 遥控输入源: 使用 fn_right 切换供弹开关（开=-2200 RPM，关=0）
+ *   - 不再使用右键与 fn_left 控制供弹反转
  *
  * 订阅话题：
  *   - /vt_remote/channels  (std_msgs/Int16MultiArray) : [ch0, ch1, ch2, ch3, wheel]
@@ -247,27 +246,22 @@ private:
   {
     const FireControlSource active_source = getActiveFireControlSource();
     if (active_source == FireControlSource::REMOTE) return;
-    if (msg->data.size() < 6) return;
+    if (msg->data.size() < 4) return;
 
     const bool left_pressed = (msg->data[3] != 0);
-    const bool right_pressed = (msg->data[4] != 0);
     const auto now = this->now();
     const bool state_changed =
       !mouse_button_state_initialized_ ||
-      (left_pressed != prev_mouse_left_pressed_) ||
-      (right_pressed != prev_mouse_right_pressed_);
+      (left_pressed != prev_mouse_left_pressed_);
     if (state_changed) {
-      last_mouse_right_toggle_time_ = now;
-      mouse_right_toggle_time_valid_ = true;
+      last_mouse_feed_toggle_time_ = now;
+      mouse_feed_toggle_time_valid_ = true;
     }
     mouse_button_state_initialized_ = true;
     prev_mouse_left_pressed_ = left_pressed;
-    prev_mouse_right_pressed_ = right_pressed;
 
     if (!left_pressed) {
       is_booster_high_speed_ = false;
-      right_hold_start_valid_ = false;
-      right_hold_active_1200_ = false;
       {
         std::lock_guard<std::mutex> lock(vel_mutex_);
         feed_rpm_ = 0.0f;
@@ -276,26 +270,9 @@ private:
     }
 
     is_booster_high_speed_ = true;
-
-    if (!right_pressed) {
-      right_hold_start_valid_ = false;
-      right_hold_active_1200_ = false;
-      std::lock_guard<std::mutex> lock(vel_mutex_);
-      feed_rpm_ = -3200.0f;
-      return;
-    }
-
-    if (!right_hold_start_valid_) {
-      right_hold_start_time_ = now;
-      right_hold_start_valid_ = true;
-      right_hold_active_1200_ = false;
-    } else if ((now - right_hold_start_time_).seconds() >= 0.2) {
-      right_hold_active_1200_ = true;
-    }
-
     {
       std::lock_guard<std::mutex> lock(vel_mutex_);
-      feed_rpm_ = right_hold_active_1200_ ? 1200.0f : -3200.0f;
+      feed_rpm_ = -2200.0f;
     }
   }
 
@@ -303,15 +280,13 @@ private:
   {
     const FireControlSource active_source = getActiveFireControlSource();
     if (active_source == FireControlSource::MOUSE) return;
-    if (msg->data.size() < 4) return;
-
-    const bool fn_left_toggle = (msg->data[1] != 0);
+    if (msg->data.size() < 3) return;
     const bool fn_right_toggle = (msg->data[2] != 0);
 
     const bool mouse_override_active =
       (active_source == FireControlSource::HYBRID) &&
-      mouse_right_toggle_time_valid_ &&
-      (this->now() - last_mouse_right_toggle_time_).seconds() < input_priority_timeout_;
+      mouse_feed_toggle_time_valid_ &&
+      (this->now() - last_mouse_feed_toggle_time_).seconds() < input_priority_timeout_;
 
     if (mouse_override_active) return;
 
@@ -324,25 +299,11 @@ private:
         std::lock_guard<std::mutex> lock(vel_mutex_);
         feed_rpm_ = 0.0f;
       } else {
-        fn_left_toggle_initialized_ = true;
-        prev_fn_left_toggle_ = fn_left_toggle;
+        std::lock_guard<std::mutex> lock(vel_mutex_);
+        feed_rpm_ = -2200.0f;
       }
     }
     prev_fn_right_toggle_ = fn_right_toggle;
-    if (!fn_left_toggle_initialized_) {
-      prev_fn_left_toggle_ = fn_left_toggle;
-      fn_left_toggle_initialized_ = true;
-      return;
-    }
-
-    if (is_booster_high_speed_ && fn_left_toggle != prev_fn_left_toggle_) {
-      const float new_feed = fn_left_toggle ? -3200.0f : 1200.0f;
-      {
-        std::lock_guard<std::mutex> lock(vel_mutex_);
-        feed_rpm_ = new_feed;
-      }
-    }
-    prev_fn_left_toggle_ = fn_left_toggle;
   }
 
   /**
@@ -465,18 +426,12 @@ private:
   bool channel_received_ = false;
 
   bool is_booster_high_speed_ = false;
-  bool fn_left_toggle_initialized_ = false;
-  bool prev_fn_left_toggle_ = false;
   bool fn_right_toggle_initialized_ = false;
   bool prev_fn_right_toggle_ = false;
-  rclcpp::Time right_hold_start_time_;
-  bool right_hold_start_valid_ = false;
-  bool right_hold_active_1200_ = false;
-  rclcpp::Time last_mouse_right_toggle_time_;
-  bool mouse_right_toggle_time_valid_ = false;
+  rclcpp::Time last_mouse_feed_toggle_time_;
+  bool mouse_feed_toggle_time_valid_ = false;
   bool mouse_button_state_initialized_ = false;
   bool prev_mouse_left_pressed_ = false;
-  bool prev_mouse_right_pressed_ = false;
   bool keyboard_wasd_active_ = false;
   int16_t mode_switch_ = 1;
   bool mode_switch_valid_ = false;

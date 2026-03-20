@@ -56,7 +56,7 @@ def generate_launch_description():
     gimbal_control_source_arg = DeclareLaunchArgument(
         'gimbal_control_source',
         default_value='hybrid',
-        description='自瞄输入源兜底值: remote/mouse/hybrid（优先由 /vt_remote/switches mode 决定）'
+        description='自瞄输入源兜底值: remote/mouse/hybrid（mouse 模式追踪触发为长按右键，优先由 /vt_remote/switches mode 决定）'
     )
     rc_min_value_arg = DeclareLaunchArgument('rc_min_value', default_value='364')
     rc_max_value_arg = DeclareLaunchArgument('rc_max_value', default_value='1684')
@@ -116,7 +116,7 @@ def generate_launch_description():
     track_yaw_ki_arg = DeclareLaunchArgument('track_yaw_ki', default_value='0.12')
     track_pitch_kp_arg = DeclareLaunchArgument('track_pitch_kp', default_value='-0.3')
     track_pitch_ki_arg = DeclareLaunchArgument('track_pitch_ki', default_value='-0.05')
-    track_exit_timeout_arg = DeclareLaunchArgument('track_exit_timeout', default_value='0.2')
+    track_exit_timeout_arg = DeclareLaunchArgument('track_exit_timeout', default_value='0.05')
     kf_q_angle_arg = DeclareLaunchArgument('kf_q_angle', default_value='0.01',
                                            description='KF角度过程噪声')
     kf_q_velocity_arg = DeclareLaunchArgument('kf_q_velocity', default_value='15.0',

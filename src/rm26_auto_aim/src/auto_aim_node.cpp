@@ -23,7 +23,6 @@
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
 #include <std_msgs/msg/float32.hpp>
-#include <std_msgs/msg/u_int16.hpp>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -299,11 +298,6 @@ public:
         "/vt_remote/switches", qos,
         std::bind(&AutoAimNode::switches_callback, this, std::placeholders::_1));
 
-    // 订阅键盘位图（mouse 模式使用 C 键长按触发追踪）
-    keyboard_subscription_ = this->create_subscription<std_msgs::msg::UInt16>(
-        "/vt_remote/keyboard", qos,
-        std::bind(&AutoAimNode::keyboard_callback, this, std::placeholders::_1));
-
     // 订阅装甲板检测结果（追踪模式 PI 控制输入）
     armors_subscription_ = this->create_subscription<auto_aim_interfaces::msg::Armors>(
         "/detector/armors",
@@ -503,17 +497,19 @@ private:
     if (active_source == GimbalControlSource::REMOTE) {
       return;
     }
-    if (msg->data.size() < 2) {
+    if (msg->data.size() < 5) {
       return;
     }
     int cx = std::max(-mouse_max_speed_, std::min(mouse_max_speed_, static_cast<int>(msg->data[0])));
     int cy = std::max(-mouse_max_speed_, std::min(mouse_max_speed_, static_cast<int>(msg->data[1])));
     mouse_x_ = static_cast<int16_t>(cx);
     mouse_y_ = static_cast<int16_t>(cy);
+    mouse_right_pressed_ = (msg->data[4] != 0);
     if (cx != 0 || cy != 0) {
       last_mouse_time_ = this->now();
       mouse_time_valid_ = true;
     }
+    handle_track_button_state(get_track_button_pressed());
   }
 
   /**
@@ -570,22 +566,11 @@ private:
       case GimbalControlSource::REMOTE:
         return trigger_pressed_;
       case GimbalControlSource::MOUSE:
-        return keyboard_c_pressed_;
+        return mouse_right_pressed_;
       case GimbalControlSource::HYBRID:
       default:
-        return trigger_pressed_ || keyboard_c_pressed_;
+        return trigger_pressed_ || mouse_right_pressed_;
     }
-  }
-
-  /**
-   * @brief 键盘位图回调，读取 C 键状态
-   *
-   * C 键位: bit13 (1 << 13)
-   * @param msg /vt_remote/keyboard 消息
-   */
-  void keyboard_callback(const std_msgs::msg::UInt16::SharedPtr msg) {
-    keyboard_c_pressed_ = ((msg->data & (1u << 13)) != 0u);
-    handle_track_button_state(get_track_button_pressed());
   }
 
   /**
@@ -890,7 +875,6 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr rc_subscription_;
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr mouse_subscription_;
   rclcpp::Subscription<std_msgs::msg::Int16MultiArray>::SharedPtr switches_subscription_;
-  rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr keyboard_subscription_;
   rclcpp::Subscription<auto_aim_interfaces::msg::Armors>::SharedPtr armors_subscription_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr motor1_pos_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr motor2_pos_sub_;
@@ -939,6 +923,7 @@ private:
   // ===== 鼠标输入状态 =====
   int16_t mouse_x_{0};
   int16_t mouse_y_{0};
+  bool mouse_right_pressed_{false};
   rclcpp::Time last_mouse_time_;
   bool mouse_time_valid_{false};
 
@@ -964,7 +949,6 @@ private:
   int16_t mode_switch_{1};
   bool mode_switch_valid_{false};
   bool trigger_pressed_{false};
-  bool keyboard_c_pressed_{false};
   std::chrono::steady_clock::time_point trigger_release_time_;
   bool trigger_release_time_valid_{false};
   double track_exit_timeout_;

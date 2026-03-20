@@ -102,7 +102,7 @@ ros2 run rm_gimbal_control gimbal_control_node --ros-args \
   -p motor1_id:=0x02 \
   -p motor1_max_velocity:=6.0 \
   -p motor1_channel_index:=0 \
-  -p motor1_control_rate:=200 \
+  -p motor1_control_rate:=500 \
   -p motor2_can_interface:=can1 \
   -p motor2_id:=0x01 \
   -p motor2_min_position:=-0.5 \
@@ -120,7 +120,7 @@ ros2 run rm_gimbal_control gimbal_control_node --ros-args \
 | `motor1_id` | int | `0x02` | 电机1 ID |
 | `motor1_max_velocity` | double | `6.0` | 遥控器映射最大速度 (rad/s) |
 | `motor1_channel_index` | int | `0` | 遥控器通道索引 (ch0) |
-| `motor1_control_rate` | int | `200` | 控制环频率 (Hz) |
+| `motor1_control_rate` | int | `500` | 控制环频率 (Hz) |
 | `motor1_control_speed` | double | `6.0` | CSP 位置跟踪速度 (rad/s) |
 | `motor1_control_acceleration` | double | `4.0` | CSP 加速度 |
 

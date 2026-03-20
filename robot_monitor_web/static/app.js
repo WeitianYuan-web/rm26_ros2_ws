@@ -20,8 +20,6 @@ function rowHtml(topic) {
       <td><span class="state-pill ${stateClass}">${stateText}</span></td>
       <td class="mono">${escapeHtml(topic.topic || "-")}</td>
       <td class="mono">${escapeHtml(topic.type || "-")}</td>
-      <td>${Number(topic.hz || 0).toFixed(2)}</td>
-      <td>${topic.count || 0}</td>
       <td class="mono">${escapeHtml(topic.last_recv_str || "-")}</td>
       <td class="preview">${escapeHtml(topic.preview || "-")}</td>
     </tr>

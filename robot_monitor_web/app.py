@@ -63,10 +63,15 @@ TOPICS_TO_MONITOR = [
 ]
 
 HEAVY_TOPICS = {"/rosout", "/parameter_events", "/image_raw"}
+IMAGE_TOPIC = "/image_raw"
 
 
 class MonitorNode(Node):
-    """! @brief ROS2 监控节点，负责订阅并缓存话题状态 """
+    """!
+    @brief ROS2 监控节点，负责订阅并缓存话题状态
+    @details 轻量版实现：仅跟踪在线状态和简要预览数据，避免高频回调导致高CPU占用。
+             移除频率计数和HZ计算，大幅增加采样间隔。
+    """
 
     def __init__(self, topics: List[str]) -> None:
         super().__init__("rm26_web_monitor_node")
@@ -82,6 +87,8 @@ class MonitorNode(Node):
         self._image_capture_event = threading.Event()
         self._latest_image_msg = None
         self._image_subscriber = None
+        self._image_sub_lock = threading.Lock()
+        self._image_msg_cls = None
         self._bridge = CvBridge() if CvBridge is not None else None
 
         for topic in self._topics:
@@ -92,20 +99,35 @@ class MonitorNode(Node):
         self._discovery_timer = self.create_timer(2.0, self._discover_and_subscribe)
 
     def _init_topic_entry(self, topic: str) -> Dict[str, Any]:
+        """!
+        @brief 初始化话题数据条目
+        @details 轻量化版本：移除 count/hz 字段，减少内存和计算开销
+        """
         return {
             "topic": topic,
             "type": "unknown",
             "online": False,
             "last_recv_sec": None,
             "last_recv_str": "-",
-            "count": 0,
-            "hz": 0.0,
             "preview": "等待消息...",
         }
 
     def _discover_and_subscribe(self) -> None:
         available = dict(self.get_topic_names_and_types())
         for topic in self._topics:
+            # 图像话题改为按需订阅，避免高频图像回调长期占用CPU
+            if topic == IMAGE_TOPIC:
+                if topic in available and available[topic]:
+                    type_str = available[topic][0]
+                    with self._lock:
+                        self._topic_data[topic]["type"] = type_str
+                    if self._image_msg_cls is None:
+                        try:
+                            self._image_msg_cls = get_message(type_str)
+                        except Exception:
+                            pass
+                continue
+
             if topic in self._subscribers:
                 continue
             if topic not in available or not available[topic]:
@@ -143,31 +165,28 @@ class MonitorNode(Node):
         return QoSProfile(depth=10)
 
     def _make_callback(self, topic: str):
+        """!
+        @brief 创建话题回调函数
+        @details 轻量优化：大幅增加采样间隔（0.5s+），移除hz/count计算，减少CPU占用。
+                 仅在必要时更新预览数据。
+        """
         def _callback(msg) -> None:
             now = time.time()
-            sample_interval = 0.10 if topic in HEAVY_TOPICS else 0.02
+            # 轻量化：大幅增加采样间隔，避免高频话题占用过多CPU
+            sample_interval = 0.5 if topic in HEAVY_TOPICS else 0.2
             if (now - self._last_sample_update[topic]) < sample_interval:
                 if topic == "/image_raw" and self._image_request_event.is_set():
                     self._latest_image_msg = msg
                     self._image_capture_event.set()
                 return
 
-            preview_interval = 1.2 if topic in HEAVY_TOPICS else 0.4
+            preview_interval = 2.0 if topic in HEAVY_TOPICS else 1.0
             update_preview = (now - self._last_preview_update[topic]) >= preview_interval
 
             with self._lock:
                 entry = self._topic_data[topic]
                 entry["online"] = True
-                entry["last_recv_str"] = datetime.fromtimestamp(now).strftime("%H:%M:%S")
-                entry["count"] += 1
-                last_recv_sec = entry["last_recv_sec"]
                 entry["last_recv_sec"] = now
-
-                if last_recv_sec is not None:
-                    dt = now - last_recv_sec
-                    if dt > 1e-6:
-                        inst_hz = 1.0 / dt
-                        entry["hz"] = round((entry["hz"] * 0.7) + (inst_hz * 0.3), 2)
 
                 if update_preview:
                     entry["preview"] = self._make_preview(topic, msg)
@@ -179,6 +198,65 @@ class MonitorNode(Node):
                 self._image_capture_event.set()
 
         return _callback
+
+    def _image_callback(self, msg) -> None:
+        now = time.time()
+        with self._lock:
+            entry = self._topic_data[IMAGE_TOPIC]
+            entry["online"] = True
+            entry["last_recv_sec"] = now
+            if (now - self._last_preview_update[IMAGE_TOPIC]) >= 2.0:
+                entry["preview"] = self._make_preview(IMAGE_TOPIC, msg)
+                self._last_preview_update[IMAGE_TOPIC] = now
+
+        if self._image_request_event.is_set():
+            self._latest_image_msg = msg
+            self._image_capture_event.set()
+
+    def _ensure_image_subscription(self) -> bool:
+        if self._bridge is None or cv2 is None:
+            return False
+
+        with self._image_sub_lock:
+            if self._image_subscriber is not None:
+                return True
+
+            msg_cls = self._image_msg_cls
+            if msg_cls is None:
+                available = dict(self.get_topic_names_and_types())
+                if IMAGE_TOPIC not in available or not available[IMAGE_TOPIC]:
+                    return False
+                type_str = available[IMAGE_TOPIC][0]
+                try:
+                    msg_cls = get_message(type_str)
+                    self._image_msg_cls = msg_cls
+                    with self._lock:
+                        self._topic_data[IMAGE_TOPIC]["type"] = type_str
+                except Exception:
+                    return False
+
+            try:
+                self._image_subscriber = self.create_subscription(
+                    msg_cls,
+                    IMAGE_TOPIC,
+                    self._image_callback,
+                    self._choose_qos(IMAGE_TOPIC),
+                )
+                return True
+            except Exception:
+                self._image_subscriber = None
+                return False
+
+    def _release_image_subscription(self) -> None:
+        with self._image_sub_lock:
+            if self._image_subscriber is None:
+                return
+            try:
+                self.destroy_subscription(self._image_subscriber)
+            except Exception:
+                pass
+            finally:
+                self._image_subscriber = None
 
     def _make_preview(self, topic: str, msg: Any) -> str:
         if topic == "/image_raw":
@@ -208,6 +286,10 @@ class MonitorNode(Node):
         return text
 
     def get_topics_snapshot(self) -> List[Dict[str, Any]]:
+        """!
+        @brief 获取话题状态快照
+        @details 返回简化的话题信息，仅包含在线状态、时间和预览
+        """
         now = time.time()
         timeout_sec = 3.0
         with self._lock:
@@ -216,23 +298,25 @@ class MonitorNode(Node):
                 entry = dict(self._topic_data[topic])
                 last = entry["last_recv_sec"]
                 entry["online"] = bool(last is not None and (now - last) <= timeout_sec)
+                if last is None:
+                    entry["last_recv_str"] = "-"
+                else:
+                    entry["last_recv_str"] = datetime.fromtimestamp(last).strftime("%H:%M:%S")
                 data.append(entry)
             return data
 
     def capture_image_jpeg(self, timeout_sec: float = 1.8) -> Optional[bytes]:
-        if self._bridge is None or cv2 is None:
+        if not self._ensure_image_subscription():
             return None
 
         # 仅在用户点击刷新时短暂请求下一帧，降低持续解码开销
         self._latest_image_msg = None
         self._image_capture_event.clear()
         self._image_request_event.set()
-        ok = self._image_capture_event.wait(timeout=timeout_sec)
-        self._image_request_event.clear()
-        if not ok or self._latest_image_msg is None:
-            return None
-
         try:
+            ok = self._image_capture_event.wait(timeout=timeout_sec)
+            if not ok or self._latest_image_msg is None:
+                return None
             frame = self._bridge.imgmsg_to_cv2(self._latest_image_msg, desired_encoding="bgr8")
             encode_ok, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
             if not encode_ok:
@@ -240,10 +324,18 @@ class MonitorNode(Node):
             return BytesIO(jpg.tobytes()).getvalue()
         except Exception:
             return None
+        finally:
+            self._image_request_event.clear()
+            # 拍到一帧后立即释放图像订阅，避免持续高频回调占用CPU
+            self._release_image_subscription()
 
 
 class MonitorApp:
-    """! @brief 封装 Flask + ROS2 运行逻辑 """
+    """!
+    @brief 封装 Flask + ROS2 运行逻辑
+    @details 轻量架构：Flask依然是最轻量且兼容性最好的选择之一。
+             简化了状态缓存逻辑，减少锁竞争。
+    """
 
     def __init__(self) -> None:
         rclpy.init(args=None)
@@ -274,6 +366,10 @@ class MonitorApp:
 
         @self.app.route("/api/status")
         def api_status():
+            """!
+            @brief 返回简化的话题状态
+            @details 缓存时间延长至2秒，进一步降低轮询开销
+            """
             now = time.time()
             with self._status_cache_lock:
                 if now >= self._status_cache_expire_sec:
@@ -281,7 +377,7 @@ class MonitorApp:
                         "robot_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "topics": self.monitor_node.get_topics_snapshot(),
                     }
-                    self._status_cache_expire_sec = now + 0.35
+                    self._status_cache_expire_sec = now + 2.0  # 延长缓存，减少计算
                 payload = dict(self._status_cache_payload)
             return jsonify(payload)
 
